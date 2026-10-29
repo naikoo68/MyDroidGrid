@@ -22,9 +22,14 @@
 .online{background:#dff5e1;color:#177245}.offline{background:#fdeaea;color:#b03a3a}
 .phone-actions button{margin:4px 4px 0 0;padding:7px 12px;border-radius:7px;border:1px solid #cfe0f2;background:#eef4fb;cursor:pointer;font-weight:600}
 .phone-actions button.del{background:#fdeaea;border-color:#f3c2c2;color:#b03a3a}
+.phone-actions button.open-btn{background:#0b63d6;border-color:#0b63d6;color:#fff}
 .modal{position:fixed;inset:0;background:rgba(10,25,45,.5);display:flex;align-items:center;justify-content:center;z-index:10}
 .modal-box{background:#fff;border-radius:14px;padding:24px;width:min(420px,92vw)}
 .modal-box input,.modal-box select{width:100%;padding:10px;margin:6px 0 12px;border:1px solid #cfe0f2;border-radius:8px;font-size:15px}
 .modal-box label{font-size:13px;color:#456;font-weight:600}
+.screen-box{width:min(430px,94vw);text-align:center}
+.phone-screen{background:#0a1420;border-radius:22px;aspect-ratio:9/15;max-height:60vh;margin:12px auto;display:flex;align-items:center;justify-content:center;color:#dcebfb;padding:20px}
+.phone-screen .note{color:#8fb4dd}
+.screen-icon{font-size:44px;margin-bottom:8px}
 .error{color:#b03a3a;font-size:14px;min-height:18px}
 .hidden{display:none!important}

@@ -93,6 +93,11 @@
     <label>CPU cores<select id="fCores"></select></label>
     <label>Storage (GB)<select id="fStorage"></select></label>
     <label>Screen<select id="fRes"></select></label>
+    <label>Proxy type (optional)<select id="fProxyType"><option value="http">HTTP</option><option value="socks5">SOCKS5</option></select></label>
+    <label>Proxy IP / host (optional)<input id="fProxyHost" placeholder="e.g. 45.90.10.20 — khali rakho to server ki apni IP"></label>
+    <label>Proxy port<input id="fProxyPort" type="number" placeholder="e.g. 8080"></label>
+    <label>Proxy username (agar hai)<input id="fProxyUser"></label>
+    <label>Proxy password (agar hai)<input id="fProxyPass" type="password"></label>
     <p id="createHint" class="note"></p>
     <p id="createError" class="error"></p>
     <button class="btn big full" onclick="submitCreate()">Create Phone</button>
@@ -110,6 +115,36 @@
     <p id="serverError" class="error"></p>
     <button class="btn big full" onclick="submitServer()">Add Server</button>
     <button class="btn ghost full" onclick="closeAddServer()">Cancel</button>
+  </div>
+</div>
+
+<div id="screenModal" class="modal hidden">
+  <div class="modal-box screen-box">
+    <h3 id="screenTitle">Phone</h3>
+    <div class="phone-screen">
+      <div>
+        <div class="screen-icon">📱</div>
+        <p id="screenMsg">Live screen yahan ayegi.</p>
+        <p class="note" id="screenNote"></p>
+      </div>
+    </div>
+    <button class="btn ghost full" onclick="closeScreen()">Close</button>
+  </div>
+</div>
+
+<div id="proxyModal" class="modal hidden">
+  <div class="modal-box">
+    <h3 id="proxyTitle">Phone Proxy</h3>
+    <p class="note">Har phone ki apni proxy hoti hai. Proxy lagao ge to is phone ka internet us proxy se jayega; khali rakho ge to phone server ki apni IP use karega. Proxy badalne ke baad phone ko ek dafa Restart karna hoga taake nayi proxy lag jaye.</p>
+    <label>Proxy type<select id="pProxyType"><option value="http">HTTP</option><option value="socks5">SOCKS5</option></select></label>
+    <label>Proxy IP / host<input id="pProxyHost" placeholder="e.g. 45.90.10.20"></label>
+    <label>Proxy port<input id="pProxyPort" type="number" placeholder="e.g. 8080"></label>
+    <label>Proxy username (agar hai)<input id="pProxyUser"></label>
+    <label>Proxy password (agar hai)<input id="pProxyPass" type="password"></label>
+    <p id="proxyError" class="error"></p>
+    <button class="btn big full" onclick="submitProxy()">Save Proxy</button>
+    <button class="btn danger full" onclick="clearProxy()">Proxy Hatao (server IP use karo)</button>
+    <button class="btn ghost full" onclick="closeProxy()">Cancel</button>
   </div>
 </div>
 

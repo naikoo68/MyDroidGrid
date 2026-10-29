@@ -88,18 +88,57 @@ function renderPool(pool) {
 }
 function renderPhones(phones, pool) {
   window._pool = pool;
+  window._phones = phones;
   el('phones').innerHTML = phones.length ? phones.map(ph => `
     <div class="card">
       <h3>${escapeHtml(ph.name)} <span class="status ${ph.status}">${ph.status.toUpperCase()}</span></h3>
       <p>Android ${ph.androidVersion} · ${ph.ramGB} GB RAM · ${ph.cores} cores · ${ph.storageGB} GB<br>
-      Screen ${ph.resolution} · Runtime ${ph.runtimeMinutes} min</p>
+      Screen ${ph.resolution} · Runtime ${ph.runtimeMinutes} min<br>
+      Proxy: ${ph.proxy ? escapeHtml(ph.proxy.host) + ':' + ph.proxy.port + ' (' + String(ph.proxy.type || 'http').toUpperCase() + ')' : 'Not set — server ki IP'}</p>
       <div class="phone-actions">
         ${ph.status === 'running'
-          ? `<button onclick="act('${ph.id}','stop')">Stop</button><button onclick="act('${ph.id}','restart')">Restart</button>`
+          ? `<button class="open-btn" onclick="openPhone('${ph.id}')">Open Phone</button><button onclick="act('${ph.id}','stop')">Stop</button><button onclick="act('${ph.id}','restart')">Restart</button>`
           : `<button onclick="act('${ph.id}','start')">Start</button><button onclick="editRes('${ph.id}',${ph.ramGB},${ph.cores})">RAM / Cores</button>`}
+        <button onclick="openProxy('${ph.id}')">Proxy</button>
         <button class="del" onclick="delPhone('${ph.id}')">Delete</button>
       </div>
     </div>`).join('') : '<div class="card"><h3>No phones yet</h3><p>Press “Create Phone” — choose the version, RAM, cores and storage yourself.</p></div>';
+}
+
+function openPhone(id) {
+  const ph = (window._phones || []).find(x => x.id === id); if (!ph) return;
+  el('screenTitle').textContent = ph.name + ' — Android ' + ph.androidVersion;
+  el('screenMsg').textContent = ph.status === 'running'
+    ? 'Ye phone chal raha hai. Iski live screen — touch karke chalane wali — Phase 2 engine ke sath yahin is window me khulegi.'
+    : 'Ye phone abhi band hai. Pehle card se Start dabao — phir iski screen yahan khulegi.';
+  el('screenNote').textContent = `Screen ${ph.resolution} · ${ph.ramGB} GB RAM · ${ph.cores} cores · Proxy: ${ph.proxy ? ph.proxy.host + ':' + ph.proxy.port : 'server IP'}`;
+  el('screenModal').classList.remove('hidden');
+}
+function closeScreen() { el('screenModal').classList.add('hidden'); }
+
+let proxyPhoneId = null;
+function openProxy(id) {
+  const ph = (window._phones || []).find(x => x.id === id); if (!ph) return;
+  proxyPhoneId = id;
+  el('proxyTitle').textContent = ph.name + ' — Proxy';
+  el('pProxyType').value = ph.proxy ? ph.proxy.type : 'http';
+  el('pProxyHost').value = ph.proxy ? ph.proxy.host : '';
+  el('pProxyPort').value = ph.proxy ? ph.proxy.port : '';
+  el('pProxyUser').value = ph.proxy ? (ph.proxy.username || '') : '';
+  el('pProxyPass').value = ph.proxy ? (ph.proxy.password || '') : '';
+  el('proxyError').textContent = '';
+  el('proxyModal').classList.remove('hidden');
+}
+function closeProxy() { el('proxyModal').classList.add('hidden'); }
+async function submitProxy() {
+  try {
+    await api(`/api/phones/${proxyPhoneId}/proxy`, 'PATCH', { type: el('pProxyType').value, host: el('pProxyHost').value.trim(), port: Number(el('pProxyPort').value || 0), username: el('pProxyUser').value.trim(), password: el('pProxyPass').value });
+    closeProxy(); showDashboard();
+  } catch (e) { el('proxyError').textContent = e.message; }
+}
+async function clearProxy() {
+  try { await api(`/api/phones/${proxyPhoneId}/proxy`, 'PATCH', { clear: true }); closeProxy(); showDashboard(); }
+  catch (e) { el('proxyError').textContent = e.message; }
 }
 function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
@@ -121,7 +160,9 @@ function createHint() {
 }
 async function submitCreate() {
   try {
-    await api('/api/phones', 'POST', { name: el('fName').value.trim() || 'My Phone', androidVersion: el('fVersion').value, ramGB: Number(el('fRam').value), cores: Number(el('fCores').value), storageGB: Number(el('fStorage').value), resolution: el('fRes').value });
+    const proxyHost = el('fProxyHost').value.trim();
+    const proxy = proxyHost ? { type: el('fProxyType').value, host: proxyHost, port: Number(el('fProxyPort').value || 0), username: el('fProxyUser').value.trim(), password: el('fProxyPass').value } : null;
+    await api('/api/phones', 'POST', { name: el('fName').value.trim() || 'My Phone', androidVersion: el('fVersion').value, ramGB: Number(el('fRam').value), cores: Number(el('fCores').value), storageGB: Number(el('fStorage').value), resolution: el('fRes').value, proxy });
     closeCreate(); showDashboard();
   } catch (e) { el('createError').textContent = e.message; }
 }

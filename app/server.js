@@ -80,6 +80,21 @@ function resourcePool(phones, excludeId = null) {
     maxPhones: CONFIG.maxPhones, phoneCount: list.length
   };
 }
+function cleanProxy(b) {
+  if (!b || typeof b !== 'object') return null;
+  const host = String(b.host || '').trim();
+  if (!host) return null;
+  if (!/^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(host)) return 'INVALID';
+  const port = Number(b.port || 0);
+  if (!(port >= 1 && port <= 65535)) return 'INVALID';
+  return {
+    type: String(b.type || 'http') === 'socks5' ? 'socks5' : 'http',
+    host, port,
+    username: String(b.username || '').slice(0, 60),
+    password: String(b.password || '').slice(0, 120)
+  };
+}
+
 function validateAllocation(phones, candidate, excludeId = null) {
   const pool = resourcePool(phones, excludeId);
   if (!excludeId && pool.phoneCount >= CONFIG.maxPhones) return `Phone limit poora ho gaya hai (${CONFIG.maxPhones}). Pehle ek phone delete karo.`;
@@ -181,12 +196,15 @@ const server = http.createServer(async (req, res) => {
       };
       const err = validateAllocation(phones, candidate);
       if (err) return send(res, 400, { error: err });
+      const proxy = cleanProxy(b.proxy);
+      if (proxy === 'INVALID') return send(res, 400, { error: 'Proxy ka IP/hostname ya port sahi nahi hai.' });
       const phone = {
         id: crypto.randomUUID(),
         ownerId: user.id,
         name: String(b.name || 'My Phone').slice(0, 40),
         androidVersion: CONFIG.androidVersions.includes(String(b.androidVersion)) ? String(b.androidVersion) : '12',
         ...candidate,
+        proxy,
         resolution: CONFIG.resolutions.includes(b.resolution) ? b.resolution : '720x1280',
         status: 'stopped',
         runtimeMinutes: 0,
@@ -197,7 +215,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { phone, pool: resourcePool(phones) });
     }
 
-    const m = p.match(/^\/api\/phones\/([^/]+)(?:\/(start|stop|restart|resources))?$/);
+    const m = p.match(/^\/api\/phones\/([^/]+)(?:\/(start|stop|restart|resources|proxy))?$/);
     if (m) {
       const phone = phones.find(x => x.id === m[1]);
       if (!phone) return send(res, 404, { error: 'Phone nahi mila.' });
@@ -219,6 +237,15 @@ const server = http.createServer(async (req, res) => {
         const err = validateAllocation(phones, candidate, phone.id);
         if (err) return send(res, 400, { error: err });
         phone.ramGB = candidate.ramGB; phone.cores = candidate.cores;
+      }
+      if (req.method === 'PATCH' && action === 'proxy') {
+        const b = await readBody(req);
+        if (b && b.clear) phone.proxy = null;
+        else {
+          const proxy = cleanProxy(b);
+          if (!proxy || proxy === 'INVALID') return send(res, 400, { error: 'Proxy ka IP/hostname aur sahi port likho — ya proxy hatane ke liye "Proxy Hatao" dabao.' });
+          phone.proxy = proxy;
+        }
       }
       saveJson('phones.json', phones);
       return send(res, 200, { phone, pool: resourcePool(phones) });
