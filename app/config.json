@@ -1,0 +1,1 @@
+{"androidVersions":["11","12","13","14","15"],"coreOptions":[1,2,3,4],"host":{"cores":4,"label":"Aadil PC","ramGB":16,"reservedCores":1,"reservedRamGB":4,"storageGB":200},"maxPhones":4,"phoneDataPartitionGB":200,"port":4000,"publicSignup":false,"ramOptionsGB":[1,2,3,4,6,8],"resolutions":["720x1280","1080x1920"],"siteName":"MyDroidGrid","storageOptionsGB":[8,16,32,64,128]}

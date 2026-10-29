@@ -1,0 +1,30 @@
+#!/bin/bash
+# ============================================================
+#  MyDroidGrid — Oracle machine banate waqt paste karne wala text
+#
+#  NON-CODER ROUTE: Oracle par machine banate waqt "Show advanced
+#  options > User data" wale box me is poori file ka text paste kar
+#  do. Machine chalte hi sab khud install ho jayega (10-15 min).
+#
+#  DOWNLOAD_URL pehle se set hai (GitHub wala link) — badalne ki
+#  zaroorat nahi. Sirf chaaho to MAX_PHONES badal sakte ho:
+#  kitne phones chahiye, wo number likho (default 4).
+# ============================================================
+
+DOWNLOAD_URL="https://github.com/naikoo68/MyDroidGrid/archive/refs/heads/main.zip"
+MAX_PHONES=4
+PORT=4000
+
+exec > /var/log/mydroidgrid-setup.log 2>&1
+set -x
+cd /tmp
+apt-get update -qq
+apt-get install -y -qq unzip curl
+curl -fsSL "$DOWNLOAD_URL" -o mydroidgrid.zip
+rm -rf mydroidgrid && mkdir mydroidgrid
+unzip -o -q mydroidgrid.zip -d mydroidgrid
+# Zip ke andar ek folder ho to us ke andar jao
+INNER=$(find /tmp/mydroidgrid -maxdepth 3 -name install-on-server.sh | head -1)
+cd "$(dirname "$INNER")"
+MDG_MAX_PHONES=$MAX_PHONES MDG_PORT=$PORT bash install-on-server.sh
+echo "MyDroidGrid setup khatam — http://(server ka IP):$PORT"

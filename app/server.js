@@ -1,0 +1,190 @@
+// MyDroidGrid — Phase 1 server (zero external dependencies, Node built-ins only)
+// API: first-run admin setup, login (HMAC token), phones CRUD + start/stop/restart,
+// per-phone RAM/CPU/storage allocation checked against the host pool in config.json.
+// Phase 2 will swap the simulated phone status for real Redroid containers
+// (docker/redroid-template.yml) — the API contract stays the same.
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const ROOT = __dirname;
+const DATA = path.join(ROOT, 'data');
+const PUBLIC = path.join(ROOT, 'public');
+const CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.json'), 'utf8'));
+fs.mkdirSync(DATA, { recursive: true });
+
+const SECRET_FILE = path.join(DATA, 'secret.txt');
+if (!fs.existsSync(SECRET_FILE)) fs.writeFileSync(SECRET_FILE, crypto.randomBytes(32).toString('hex'));
+const SECRET = fs.readFileSync(SECRET_FILE, 'utf8').trim();
+
+function loadJson(name, fallback) {
+  const f = path.join(DATA, name);
+  if (!fs.existsSync(f)) return fallback;
+  try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch { return fallback; }
+}
+function saveJson(name, value) { fs.writeFileSync(path.join(DATA, name), JSON.stringify(value, null, 2)); }
+
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return { salt, hash };
+}
+function signToken(payload) {
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = crypto.createHmac('sha256', SECRET).update(body).digest('base64url');
+  return body + '.' + sig;
+}
+function verifyToken(token) {
+  if (!token || !token.includes('.')) return null;
+  const [body, sig] = token.split('.');
+  const expected = crypto.createHmac('sha256', SECRET).update(body).digest('base64url');
+  if (sig !== expected) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (payload.exp < Date.now()) return null;
+    return payload;
+  } catch { return null; }
+}
+
+function send(res, code, obj, type = 'application/json') {
+  const body = type === 'application/json' ? JSON.stringify(obj) : obj;
+  res.writeHead(code, { 'Content-Type': type });
+  res.end(body);
+}
+function readBody(req) {
+  return new Promise(resolve => {
+    let data = '';
+    req.on('data', c => { data += c; });
+    req.on('end', () => { try { resolve(JSON.parse(data || '{}')); } catch { resolve({}); } });
+  });
+}
+function authUser(req) {
+  const header = req.headers.authorization || '';
+  const payload = verifyToken(header.replace('Bearer ', ''));
+  if (!payload) return null;
+  const users = loadJson('users.json', []);
+  return users.find(u => u.id === payload.uid) || null;
+}
+
+function resourcePool(phones, excludeId = null) {
+  const usableRam = CONFIG.host.ramGB - CONFIG.host.reservedRamGB;
+  const usableCores = CONFIG.host.cores - CONFIG.host.reservedCores;
+  const usableStorage = CONFIG.host.storageGB;
+  const list = phones.filter(p => p.id !== excludeId);
+  const used = list.reduce((a, p) => ({ ramGB: a.ramGB + p.ramGB, cores: a.cores + p.cores, storageGB: a.storageGB + p.storageGB }), { ramGB: 0, cores: 0, storageGB: 0 });
+  return {
+    host: CONFIG.host,
+    total: { ramGB: usableRam, cores: usableCores, storageGB: usableStorage },
+    used,
+    free: { ramGB: usableRam - used.ramGB, cores: usableCores - used.cores, storageGB: usableStorage - used.storageGB },
+    maxPhones: CONFIG.maxPhones, phoneCount: list.length
+  };
+}
+function validateAllocation(phones, candidate, excludeId = null) {
+  const pool = resourcePool(phones, excludeId);
+  if (!excludeId && pool.phoneCount >= CONFIG.maxPhones) return `Phone limit poora ho gaya hai (${CONFIG.maxPhones}). Pehle ek phone delete karo.`;
+  if (candidate.ramGB > pool.free.ramGB) return `RAM kam hai: ${candidate.ramGB} GB chahiye, free sirf ${pool.free.ramGB} GB hai.`;
+  if (candidate.cores > pool.free.cores) return `CPU cores kam hain: ${candidate.cores} chahiye, free sirf ${pool.free.cores} hain.`;
+  if (candidate.storageGB > pool.free.storageGB) return `Storage kam hai: ${candidate.storageGB} GB chahiye, free sirf ${pool.free.storageGB} GB hai.`;
+  return null;
+}
+
+const MIME = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json', '.svg': 'image/svg+xml' };
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://localhost');
+  const p = url.pathname;
+
+  if (p === '/api/config') {
+    const users = loadJson('users.json', []);
+    return send(res, 200, { siteName: CONFIG.siteName, publicSignup: CONFIG.publicSignup, needsSetup: users.length === 0, androidVersions: CONFIG.androidVersions, ramOptionsGB: CONFIG.ramOptionsGB, coreOptions: CONFIG.coreOptions, storageOptionsGB: CONFIG.storageOptionsGB, resolutions: CONFIG.resolutions, host: CONFIG.host, maxPhones: CONFIG.maxPhones });
+  }
+  if (p === '/api/setup' && req.method === 'POST') {
+    const users = loadJson('users.json', []);
+    if (users.length) return send(res, 400, { error: 'Setup pehle hi ho chuka hai. Login karo.' });
+    const { username, password } = await readBody(req);
+    if (!username || !password || password.length < 6) return send(res, 400, { error: 'Username aur kam se kam 6 characters ka password chahiye.' });
+    const { salt, hash } = hashPassword(password);
+    const user = { id: crypto.randomUUID(), username, salt, hash, role: 'admin', createdAt: Date.now() };
+    users.push(user); saveJson('users.json', users);
+    return send(res, 200, { token: signToken({ uid: user.id, exp: Date.now() + 7 * 24 * 3600 * 1000 }), username });
+  }
+  if (p === '/api/auth/login' && req.method === 'POST') {
+    const { username, password } = await readBody(req);
+    const users = loadJson('users.json', []);
+    const user = users.find(u => u.username === username);
+    if (!user) return send(res, 401, { error: 'Username ya password ghalat hai.' });
+    const check = hashPassword(password, user.salt);
+    if (check.hash !== user.hash) return send(res, 401, { error: 'Username ya password ghalat hai.' });
+    return send(res, 200, { token: signToken({ uid: user.id, exp: Date.now() + 7 * 24 * 3600 * 1000 }), username });
+  }
+
+  if (p.startsWith('/api/phones') || p === '/api/resources') {
+    const user = authUser(req);
+    if (!user) return send(res, 401, { error: 'Login required.' });
+    let phones = loadJson('phones.json', []);
+
+    if (p === '/api/resources' && req.method === 'GET') return send(res, 200, resourcePool(phones));
+
+    if (p === '/api/phones' && req.method === 'GET') return send(res, 200, { phones, pool: resourcePool(phones) });
+
+    if (p === '/api/phones' && req.method === 'POST') {
+      const b = await readBody(req);
+      const candidate = {
+        ramGB: Number(b.ramGB || 2), cores: Number(b.cores || 2), storageGB: Number(b.storageGB || 16)
+      };
+      const err = validateAllocation(phones, candidate);
+      if (err) return send(res, 400, { error: err });
+      const phone = {
+        id: crypto.randomUUID(),
+        ownerId: user.id,
+        name: String(b.name || 'My Phone').slice(0, 40),
+        androidVersion: CONFIG.androidVersions.includes(String(b.androidVersion)) ? String(b.androidVersion) : '12',
+        ...candidate,
+        resolution: CONFIG.resolutions.includes(b.resolution) ? b.resolution : '720x1280',
+        status: 'stopped',
+        runtimeMinutes: 0,
+        startedAt: null,
+        createdAt: Date.now()
+      };
+      phones.push(phone); saveJson('phones.json', phones);
+      return send(res, 200, { phone, pool: resourcePool(phones) });
+    }
+
+    const m = p.match(/^\/api\/phones\/([^/]+)(?:\/(start|stop|restart|resources))?$/);
+    if (m) {
+      const phone = phones.find(x => x.id === m[1]);
+      if (!phone) return send(res, 404, { error: 'Phone nahi mila.' });
+      const action = m[2];
+      if (req.method === 'DELETE' && !action) {
+        phones = phones.filter(x => x.id !== phone.id); saveJson('phones.json', phones);
+        return send(res, 200, { ok: true, pool: resourcePool(phones) });
+      }
+      if (req.method === 'POST' && action === 'start') { phone.status = 'running'; phone.startedAt = Date.now(); }
+      if (req.method === 'POST' && (action === 'stop' || action === 'restart')) {
+        if (phone.startedAt) phone.runtimeMinutes += Math.round((Date.now() - phone.startedAt) / 60000);
+        phone.startedAt = action === 'restart' ? Date.now() : null;
+        phone.status = action === 'restart' ? 'running' : 'stopped';
+      }
+      if (req.method === 'PATCH' && action === 'resources') {
+        if (phone.status === 'running') return send(res, 400, { error: 'Pehle phone STOP karo, phir RAM/Cores badlo.' });
+        const b = await readBody(req);
+        const candidate = { ramGB: Number(b.ramGB || phone.ramGB), cores: Number(b.cores || phone.cores), storageGB: phone.storageGB };
+        const err = validateAllocation(phones, candidate, phone.id);
+        if (err) return send(res, 400, { error: err });
+        phone.ramGB = candidate.ramGB; phone.cores = candidate.cores;
+      }
+      saveJson('phones.json', phones);
+      return send(res, 200, { phone, pool: resourcePool(phones) });
+    }
+    return send(res, 404, { error: 'Route nahi mila.' });
+  }
+
+  // static files
+  let file = p === '/' ? '/index.html' : p;
+  const full = path.join(PUBLIC, file);
+  if (!full.startsWith(PUBLIC) || !fs.existsSync(full)) return send(res, 404, 'Not found', 'text/plain');
+  return send(res, 200, fs.readFileSync(full), MIME[path.extname(full)] || 'text/plain');
+});
+
+server.listen(CONFIG.port, () => console.log(`MyDroidGrid running at http://localhost:${CONFIG.port}`));

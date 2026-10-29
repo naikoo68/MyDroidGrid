@@ -1,0 +1,92 @@
+============================================================
+ MyDroidGrid — SETUP GUIDE (non-coders ke liye, step by step)
+ Koi coding nahi chahiye. Har step bas parho aur waisa karo.
+============================================================
+
+YE KIT KYA KARTI HAI?
+Tumhara apna cloud-phone system tumhare APNE Oracle Cloud
+account par lag jata hai. Tumhe sirf server ki bunyadi details
+deni hain — install, setting, sab khud ho jata hai.
+Har banda apna Oracle account use karega.
+
+------------------------------------------------------------
+STEP 1 — Oracle Cloud ka FREE account banao
+------------------------------------------------------------
+1. cloud.oracle.com par jao > "Start for free" par click karo.
+2. Apna email, naam, mulk do. Card sirf pehchan ki tasdeeq ke
+   liye manga jata hai — FREE walay hisay par paisa NAHI katta.
+3. Signup ke waqt "Home Region" soch kar chuno (ye baad me
+   badal NAHI sakta). Apne qareeb wala region behtar hai.
+4. Account tayyar hone par email ayega — 10-30 min lag sakte hain.
+
+------------------------------------------------------------
+STEP 2 — Ek machine (server) banao
+------------------------------------------------------------
+1. Oracle Console > menu > Compute > Instances > Create Instance.
+2. Naam kuch bhi likh do, masalan: mydroidgrid
+3. Image: "Canonical Ubuntu" (22.04 ya 24.04) chuno.
+4. Shape: "VM.Standard.A1.Flex" (ye FREE wala hai)
+   - Cores: jitne zyada milein (2 ya 4)
+   - RAM: cores ke hisaab se (2 core = 12 GB, 4 core = 24 GB)
+   Agar "Out of capacity" aye to 1-2 din baad dobara try karo —
+   ye aam baat hai, ghalti nahi.
+5. Networking me "Assign a public IPv4 address" ON rakho.
+6. SSH key: "Generate a key pair for me" chuno aur PRIVATE KEY
+   lazmi DOWNLOAD karke sambhal lo — ye tumhari chaabi hai.
+7. (SAB SE ASAAN RAASTA) Neeche "Show advanced options" >
+   "User data" box me is kit ki file "cloud-init-userdata.txt"
+   ka poora text paste kar do (pehle us file me apni zip ka
+   link dalna hai — neeche note dekho). Phir "Create" dabao.
+   Machine 10-15 minute me khud hi tayyar ho jayegi.
+   Agar ye na karo to Step 3 wala doosra raasta use karo.
+
+------------------------------------------------------------
+STEP 3 — (Sirf tab jab Step 2.7 na kiya ho) Ek command chalao
+------------------------------------------------------------
+Apne computer par Git-Bash ya Terminal kholo, is kit ka folder
+kholo aur ye likho:
+    bash deploy.sh
+Script tum se sirf ye puchega:
+    1) Server ka Public IP   (Oracle Console me machine ke page par hai)
+    2) SSH username          (ubuntu likhna hai)
+    3) Key file ka path      (Step 2.6 me download ki thi)
+    4) Kitne phones          (Enter dabana hai = 4)
+    5) Port                  (Enter dabana hai)
+Bas — install khud ho jayega.
+
+------------------------------------------------------------
+STEP 4 — Website kholne ke liye ek dafa port kholo (lazmi)
+------------------------------------------------------------
+1. Oracle Console > apni machine > "Subnet" par click >
+   "Default Security List" > "Add Ingress Rules"
+2. Source CIDR: 0.0.0.0/0     Destination Port: 4000
+3. Add kar do. (Ye na kiya to website bahar se nahi khulegi.)
+
+------------------------------------------------------------
+STEP 5 — Website kholo, apna account banao
+------------------------------------------------------------
+Browser me ye address likho:  http://(tumhara server IP):4000
+Pehli screen par apna admin username/password banao — ye sirf
+tumhare server par save hota hai. Phir "Create Phone" se apna
+pehla phone banao: Android version, RAM, cores, storage apni
+marzi se chuno.
+
+------------------------------------------------------------
+NOTE — zip ka link (Step 2.7 walon ke liye)
+------------------------------------------------------------
+Is kit ki zip GitHub par hosted hai:
+    https://github.com/naikoo68/MyDroidGrid
+Aur "cloud-init-userdata.txt" file me wo download link pehle
+se laga hua hai — tumhe kuch badalna NAHI hai. Bas file ka
+poora text waisa ka waisa paste karna hai.
+
+------------------------------------------------------------
+MASLA AYE TO?
+------------------------------------------------------------
+- "Out of capacity": 1-2 din baad phir try karo (FREE machines
+  aksar bhari hoti hain).
+- Website nahi khul rahi: Step 4 wala port khola tha? Aur
+  machine "Running" hai? Dono check karo.
+- Address me apna asal server IP likha hai, "(tumhara IP)"
+  wala text nahi.
+============================================================
