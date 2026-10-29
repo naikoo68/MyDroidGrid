@@ -89,6 +89,24 @@ function validateAllocation(phones, candidate, excludeId = null) {
   return null;
 }
 
+// Doosre MyDroidGrid server ki halat check karna (uska public /api/config parh kar)
+function checkServer(host, port) {
+  return new Promise(resolve => {
+    const req = http.get({ host, port, path: '/api/config', timeout: 3000 }, r => {
+      let d = '';
+      r.on('data', c => { d += c; });
+      r.on('end', () => {
+        try {
+          const j = JSON.parse(d);
+          resolve({ online: r.statusCode === 200, siteName: j.siteName || null, maxPhones: (j.maxPhones ?? null), hostInfo: j.host || null, needsSetup: !!j.needsSetup });
+        } catch { resolve({ online: false }); }
+      });
+    });
+    req.on('timeout', () => { req.destroy(); resolve({ online: false }); });
+    req.on('error', () => resolve({ online: false }));
+  });
+}
+
 const MIME = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript', '.json': 'application/json', '.svg': 'image/svg+xml' };
 
 const server = http.createServer(async (req, res) => {
@@ -117,6 +135,34 @@ const server = http.createServer(async (req, res) => {
     const check = hashPassword(password, user.salt);
     if (check.hash !== user.hash) return send(res, 401, { error: 'Username ya password ghalat hai.' });
     return send(res, 200, { token: signToken({ uid: user.id, exp: Date.now() + 7 * 24 * 3600 * 1000 }), username });
+  }
+
+  if (p === '/api/servers' || p.startsWith('/api/servers/')) {
+    const user = authUser(req);
+    if (!user) return send(res, 401, { error: 'Login required.' });
+    let servers = loadJson('servers.json', []);
+
+    if (p === '/api/servers' && req.method === 'GET') {
+      const checked = await Promise.all(servers.map(async s => ({ ...s, ...(await checkServer(s.host, s.port)) })));
+      return send(res, 200, { servers: checked });
+    }
+    if (p === '/api/servers' && req.method === 'POST') {
+      const b = await readBody(req);
+      const host = String(b.host || '').trim();
+      const port = Number(b.port || 4000);
+      if (!/^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(host) || host.includes('..')) return send(res, 400, { error: 'Server ka IP/hostname sahi likho (masalan 129.150.10.25).' });
+      if (!Number.isInteger(port) || port < 1 || port > 65535) return send(res, 400, { error: 'Port 1-65535 ke darmiyan hona chahiye.' });
+      if (servers.some(s => s.host === host && s.port === port)) return send(res, 400, { error: 'Ye server pehle se add hai.' });
+      const server = { id: crypto.randomUUID(), name: String(b.name || host).slice(0, 40), host, port, createdAt: Date.now() };
+      servers.push(server); saveJson('servers.json', servers);
+      return send(res, 200, { server });
+    }
+    const sm = p.match(/^\/api\/servers\/([^/]+)$/);
+    if (sm && req.method === 'DELETE') {
+      servers = servers.filter(s => s.id !== sm[1]); saveJson('servers.json', servers);
+      return send(res, 200, { ok: true });
+    }
+    return send(res, 404, { error: 'Route nahi mila.' });
   }
 
   if (p.startsWith('/api/phones') || p === '/api/resources') {

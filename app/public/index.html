@@ -60,6 +60,16 @@
   <section id="pool" class="pool"></section>
   <section id="phones" class="grid"></section>
   <p class="note">Live screen streaming arrives in Phase 2, when the phones run live on Ubuntu (Redroid). In Phase 1 the full system — accounts, phones, resources — is real and saved.</p>
+
+  <section class="dash-head">
+    <h2>My Servers <span id="serverCount" class="badge"></span></h2>
+    <div>
+      <button class="btn big" onclick="openAddServer()">+ Add Server</button>
+      <button class="btn ghost" onclick="renderServers()">Refresh</button>
+    </div>
+  </section>
+  <section id="servers" class="grid"></section>
+  <p class="note">Har server apna alag system hai — yahan se sab ki halat (online/offline) dikhegi aur har ek ka dashboard ek click par khulega.</p>
 </main>
 
 <div id="authModal" class="modal hidden">
@@ -87,6 +97,19 @@
     <p id="createError" class="error"></p>
     <button class="btn big full" onclick="submitCreate()">Create Phone</button>
     <button class="btn ghost full" onclick="closeCreate()">Cancel</button>
+  </div>
+</div>
+
+<div id="serverModal" class="modal hidden">
+  <div class="modal-box">
+    <h3>Add Server</h3>
+    <p class="note">Doosre MyDroidGrid server ki details do. Isi tarah jitne chaaho server add kar sakte ho — 2, 3, 10...</p>
+    <label>Server ka naam<input id="sName" placeholder="e.g. Server 2 — Friend"></label>
+    <label>Server IP / hostname<input id="sHost" placeholder="e.g. 129.150.10.25"></label>
+    <label>Port<input id="sPort" type="number" value="4000"></label>
+    <p id="serverError" class="error"></p>
+    <button class="btn big full" onclick="submitServer()">Add Server</button>
+    <button class="btn ghost full" onclick="closeAddServer()">Cancel</button>
   </div>
 </div>
 

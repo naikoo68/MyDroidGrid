@@ -45,7 +45,38 @@ async function showDashboard() {
   el('landing').classList.add('hidden');
   el('dashboard').classList.remove('hidden');
   el('navAuthBtn').textContent = 'My Phones';
-  renderPool(pool); renderPhones(phones, pool);
+  renderPool(pool); renderPhones(phones, pool); renderServers();
+}
+
+async function renderServers() {
+  if (!el('servers')) return;
+  try {
+    const { servers } = await api('/api/servers');
+    el('serverCount').textContent = servers.length + ' servers';
+    el('servers').innerHTML = servers.length ? servers.map(s => `
+    <div class="card">
+      <h3>${escapeHtml(s.name)} <span class="status ${s.online ? 'online' : 'offline'}">${s.online ? 'ONLINE' : 'OFFLINE'}</span></h3>
+      <p>${escapeHtml(s.host)}:${s.port}<br>${s.online
+        ? `Dashboard: ${escapeHtml(s.siteName || 'MyDroidGrid')} · Max phones: ${s.maxPhones ?? '?'}${s.hostInfo ? ` · ${s.hostInfo.ramGB} GB RAM / ${s.hostInfo.cores} cores` : ''}`
+        : 'Server jawab nahi de raha — band hai, ya us par port khula nahi hai.'}</p>
+      <div class="phone-actions">
+        <button onclick="window.open('http://${s.host}:${s.port}', '_blank')">Open Dashboard</button>
+        <button class="del" onclick="delServer('${s.id}')">Remove</button>
+      </div>
+    </div>`).join('') : '<div class="card"><h3>No other servers yet</h3><p>“Add Server” dabao, doosre server ka IP aur port do — phir wo yahin nazar ayega.</p></div>';
+  } catch (e) { /* servers list optional hai */ }
+}
+function openAddServer() { el('serverModal').classList.remove('hidden'); el('serverError').textContent = ''; }
+function closeAddServer() { el('serverModal').classList.add('hidden'); }
+async function submitServer() {
+  try {
+    await api('/api/servers', 'POST', { name: el('sName').value.trim(), host: el('sHost').value.trim(), port: Number(el('sPort').value || 4000) });
+    closeAddServer(); renderServers();
+  } catch (e) { el('serverError').textContent = e.message; }
+}
+async function delServer(id) {
+  if (!confirm('Is server ko list se hata dun? Server khud band nahi hoga — sirf yahan se us ka link hat jayega.')) return;
+  await api(`/api/servers/${id}`, 'DELETE'); renderServers();
 }
 function bar(label, used, total, unit) {
   const pct = total ? Math.min(100, Math.round(used / total * 100)) : 0;

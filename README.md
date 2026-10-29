@@ -21,6 +21,10 @@ Teen raaste hain:
 - `cloud-init-userdata.txt` — Oracle machine banate waqt paste karne wala text (download link pehle se set hai)
 - `SETUP-GUIDE.txt` — asaan zaban me poori guide
 
+## Ek se zyada server? (2, 3, jitne chaaho)
+
+Har server par yehi setup lagega. Phir kisi ek server ke dashboard me **Add Server** dabakar doosre servers ka **IP + port** add kar do — sab servers ki online/offline halat ek hi jagah dikhegi aur har ek ka dashboard ek click par khul jayega. Yaad rahe: har server apna alag system hai, un ki taaqat (RAM/cores) jama nahi hoti.
+
 ## Zaruri baat
 
 Har banda apna Oracle account use karega. Setup ke baad Oracle Console me apni machine ke Security List me **TCP port 4000** kholna lazmi hai, warna website bahar se nahi khulegi (guide me Step 4).
