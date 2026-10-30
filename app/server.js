@@ -185,6 +185,14 @@ async function applyProxy(phone) {
   } catch { /* phone band ho to khamoshi se chor do — agle Start par lag jayegi */ }
 }
 
+// Phone ki screen kabhi khud band (sleep) na ho — warna live screen par
+// kaali tasveer ati hai, jaise asal phone so gaya ho.
+async function applyDisplay(phone) {
+  try {
+    await runDocker(['exec', containerName(phone), '/system/bin/settings', 'put', 'system', 'screen_off_timeout', '2147483647'], 10000);
+  } catch { /* best effort */ }
+}
+
 // Phone ki timezone/language lagana (PhoneGrid ki tarah creation par choice).
 // Timezone foran lagti hai; language (locale) persist hoti hai — poori tarah
 // agle restart par nazar ati hai.
@@ -287,6 +295,7 @@ async function startPipeline(phoneId, mode) {
     if (!booted) throw new Error('boot timeout');
     await applyProxy(snap);
     await applyLocale(snap);
+    await applyDisplay(snap);
     mutatePhone(phoneId, ph => {
       if (ph.status !== 'starting') return; // beech me stop/delete ho gaya ho to hath na lagao
       ph.status = 'running'; ph.startedAt = Date.now(); ph.lastError = null;
@@ -616,7 +625,7 @@ const server = http.createServer(async (req, res) => {
           args = ['exec', containerName(phone), '/system/bin/input', 'swipe', toX(b.fx1), toY(b.fy1), toX(b.fx2), toY(b.fy2), String(ms)];
         } else if (b.type === 'key') {
           const code = Number(b.code);
-          if (![3, 4, 19, 20, 21, 22, 26, 61, 62, 66, 67, 111, 112, 187].includes(code)) return send(res, 400, { error: 'Ye key allowed nahi hai.' });
+          if (![3, 4, 19, 20, 21, 22, 26, 61, 62, 66, 67, 111, 112, 187, 224].includes(code)) return send(res, 400, { error: 'Ye key allowed nahi hai.' });
           args = ['exec', containerName(phone), '/system/bin/input', 'keyevent', String(code)];
         } else if (b.type === 'text') {
           // Keyboard se likhai: Android ka 'input text' space ke liye %s leta hai

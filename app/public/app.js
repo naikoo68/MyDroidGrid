@@ -177,6 +177,8 @@ function openPhone(id) {
     startScreenStream(id);
     el('syncOn').checked = false;
     renderSyncTargets();
+    // Phone soya hua ho to jaga do (WAKEUP key — chal rahe phone par asar nahi karti)
+    api(`/api/phones/${id}/input`, 'POST', { type: 'key', code: 224 }).catch(() => {});
   } else {
     el('screenMsg').textContent = 'Ye phone abhi band hai. Pehle card se Start dabao — phir iski screen yahan khulegi.';
     el('screenControls').classList.add('hidden');
