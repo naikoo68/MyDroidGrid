@@ -170,11 +170,13 @@ function openPhone(id) {
   if (ph.status === 'running') {
     el('screenMsg').textContent = 'Screen aa rahi hai...';
     el('screenControls').classList.remove('hidden');
+    el('typeControls').classList.remove('hidden');
     el('screenModal').classList.remove('hidden');
     startScreenStream(id);
   } else {
     el('screenMsg').textContent = 'Ye phone abhi band hai. Pehle card se Start dabao — phir iski screen yahan khulegi.';
     el('screenControls').classList.add('hidden');
+    el('typeControls').classList.add('hidden');
     el('screenModal').classList.remove('hidden');
   }
 }
@@ -192,6 +194,38 @@ async function screenKey(code) {
     refreshScreenNow();
   } catch (e) { /* khamoshi — agli refresh asal halat dikha degi */ }
 }
+
+async function sendScreenText() {
+  if (!screenStream.phoneId) return;
+  const box = el('typeText');
+  const text = box.value;
+  if (!text) return;
+  try {
+    await api(`/api/phones/${screenStream.phoneId}/input`, 'POST', { type: 'text', text });
+    box.value = '';
+    refreshScreenNow();
+  } catch (e) { /* khamoshi — agli refresh asal halat dikha degi */ }
+  box.focus();
+}
+
+// Screen khuli ho to asal (external) keyboard bhi phone tak jaye:
+// har harf, Backspace, Enter, Tab, Escape aur arrows — sab.
+document.addEventListener('keydown', e => {
+  if (!screenStream.phoneId || el('screenModal').classList.contains('hidden')) return;
+  const tag = (e.target && e.target.tagName) || '';
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (tag === 'INPUT') {
+    if (e.target.id === 'typeText' && e.key === 'Enter') { e.preventDefault(); sendScreenText(); }
+    return;
+  }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const keys = { Backspace: 67, Enter: 66, Tab: 61, Escape: 111, ArrowUp: 19, ArrowDown: 20, ArrowLeft: 21, ArrowRight: 22 };
+  if (keys[e.key]) { e.preventDefault(); screenKey(keys[e.key]); return; }
+  if (e.key && e.key.length === 1) {
+    e.preventDefault();
+    api(`/api/phones/${screenStream.phoneId}/input`, 'POST', { type: 'text', text: e.key }).then(refreshScreenNow).catch(() => {});
+  }
+});
 
 // Screen par ungli/mouse: halki harakat = tap, lambi harakat = swipe.
 let touchStart = null;

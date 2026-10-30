@@ -420,8 +420,15 @@ const server = http.createServer(async (req, res) => {
           args = ['exec', containerName(phone), '/system/bin/input', 'swipe', toX(b.fx1), toY(b.fy1), toX(b.fx2), toY(b.fy2), String(ms)];
         } else if (b.type === 'key') {
           const code = Number(b.code);
-          if (![3, 4, 26, 66, 67, 187].includes(code)) return send(res, 400, { error: 'Ye key allowed nahi hai.' });
+          if (![3, 4, 19, 20, 21, 22, 26, 61, 62, 66, 67, 111, 112, 187].includes(code)) return send(res, 400, { error: 'Ye key allowed nahi hai.' });
           args = ['exec', containerName(phone), '/system/bin/input', 'keyevent', String(code)];
+        } else if (b.type === 'text') {
+          // Keyboard se likhai: Android ka 'input text' space ke liye %s leta hai
+          // aur asal % ke liye \\% — nayi line ko space bana do (Enter alag key hai).
+          const raw = String(b.text || '');
+          if (!raw || raw.length > 500) return send(res, 400, { error: 'Text khali hai ya bohat lamba hai (500 characters tak).' });
+          const prepared = raw.replace(/%/g, '\\%').replace(/ /g, '%s').replace(/[\r\n]+/g, ' ');
+          args = ['exec', containerName(phone), '/system/bin/input', 'text', prepared];
         } else {
           return send(res, 400, { error: 'Input type samajh nahi aya.' });
         }

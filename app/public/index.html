@@ -134,6 +134,10 @@
       <button onclick="screenKey(3)">● Home</button>
       <button onclick="screenKey(187)">■ Recents</button>
     </div>
+    <div class="screen-controls hidden" id="typeControls">
+      <input id="typeText" type="text" placeholder="Yahan likho — phone me chala jayega (email, password...)" autocomplete="off" style="flex:1">
+      <button onclick="sendScreenText()">Likho ➤</button>
+    </div>
     <p class="note" id="screenNote"></p>
     <button class="btn ghost full" onclick="closeScreen()">Close</button>
   </div>
