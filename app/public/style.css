@@ -19,6 +19,10 @@
 .track{height:10px;background:#e2eaf2;border-radius:6px;overflow:hidden}.fill{height:100%;background:#0b63d6}
 .status{font-size:12px;font-weight:700;padding:3px 9px;border-radius:12px}
 .running{background:#dff5e1;color:#177245}.stopped{background:#fdeaea;color:#b03a3a}
+.status.starting{background:#fdf0d5;color:#8a6d1a}
+.status.error{background:#fdeaea;color:#b03a3a}
+.phone-error{color:#b03a3a;font-size:13px}
+.starting-note{color:#8a6d1a;font-weight:600}
 .online{background:#dff5e1;color:#177245}.offline{background:#fdeaea;color:#b03a3a}
 .phone-actions button{margin:4px 4px 0 0;padding:7px 12px;border-radius:7px;border:1px solid #cfe0f2;background:#eef4fb;cursor:pointer;font-weight:600}
 .phone-actions button.del{background:#fdeaea;border-color:#f3c2c2;color:#b03a3a}

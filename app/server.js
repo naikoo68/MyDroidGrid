@@ -1,12 +1,15 @@
-// MyDroidGrid — Phase 1 server (zero external dependencies, Node built-ins only)
+// MyDroidGrid — server (zero external dependencies, Node built-ins only)
 // API: first-run admin setup, login (HMAC token), phones CRUD + start/stop/restart,
 // per-phone RAM/CPU/storage allocation checked against the host pool in config.json.
-// Phase 2 will swap the simulated phone status for real Redroid containers
-// (docker/redroid-template.yml) — the API contract stays the same.
+// Phase 2: start/stop/restart/delete drive REAL Redroid containers via Docker
+// (engine layer below) — the API contract is unchanged.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileP = promisify(execFile);
 
 const ROOT = __dirname;
 const DATA = path.join(ROOT, 'data');
@@ -104,6 +107,121 @@ function validateAllocation(phones, candidate, excludeId = null) {
   return null;
 }
 
+// ---------- Phase 2 engine: asal Redroid containers (Docker) ----------
+// Har phone ka ek container: naam mdg-<phoneId>, data us ke apne folder me.
+// Docker ki koi ghalti request ko crash nahi karti — error phone.lastError me jati hai.
+const PHONE_DATA = path.join(DATA, 'phone-data');
+const startingSet = new Set();
+
+async function runDocker(args, timeout = 30000) {
+  const r = await execFileP('docker', args, { timeout, maxBuffer: 16 * 1024 * 1024 });
+  return String(r.stdout || '');
+}
+function shortErr(e) {
+  const raw = (e && (e.stderr || e.message)) || e || 'unknown error';
+  return String(raw).trim().replace(/\s+/g, ' ').slice(0, 300);
+}
+function containerName(phone) { return 'mdg-' + phone.id; }
+function phoneDataDir(phone) { return path.join(PHONE_DATA, phone.id); }
+function imageFor(version) { return `redroid/redroid:${version}.0.0-latest`; }
+function resParts(resolution) {
+  const parts = String(resolution || '720x1280').split('x').map(Number);
+  const width = parts[0] || 720, height = parts[1] || 1280;
+  return { width, height, dpi: width >= 1080 ? 320 : 240 };
+}
+function nextAdbPort(phones, excludeId = null) {
+  const used = new Set(phones.filter(x => x.id !== excludeId).map(x => x.adbPort).filter(Boolean));
+  let port = 5555;
+  while (used.has(port)) port++;
+  return port;
+}
+async function engineStatus() {
+  let docker = false;
+  try { await runDocker(['version', '--format', '{{.Server.Version}}']); docker = true; } catch { docker = false; }
+  return { docker, binder: fs.existsSync('/dev/binderfs/binder') };
+}
+function mutatePhone(id, fn) {
+  const list = loadJson('phones.json', []);
+  const ph = list.find(x => x.id === id);
+  if (!ph) return;
+  fn(ph);
+  saveJson('phones.json', list);
+}
+
+// Phone ko asal me chalane ki poori pipeline — background me chalti hai,
+// POST /start sirf status 'starting' karke foran jawab de deta hai.
+async function startPipeline(phoneId, mode) {
+  if (startingSet.has(phoneId)) return;
+  startingSet.add(phoneId);
+  try {
+    const snap = loadJson('phones.json', []).find(x => x.id === phoneId);
+    if (!snap) return;
+    const name = containerName(snap);
+    // (a) engine tayyar hai?
+    const eng = await engineStatus();
+    if (!eng.docker) throw new Error('Docker is not running on this server — the phone engine cannot start.');
+    if (!eng.binder) throw new Error('Android kernel support (binder) is not ready on this server — the phone cannot start.');
+    // (b) Android image maujood hai? na ho to download karo
+    const image = imageFor(snap.androidVersion);
+    let haveImage = true;
+    try { await runDocker(['image', 'inspect', image]); } catch { haveImage = false; }
+    if (!haveImage) await runDocker(['pull', image], 600000);
+    // (c) container hai to start/restart, warna naya banao
+    let exists = true;
+    try { await runDocker(['inspect', name]); } catch { exists = false; }
+    if (exists && mode === 'restart') {
+      await runDocker(['restart', name], 60000);
+    } else if (exists) {
+      await runDocker(['start', name], 60000);
+    } else {
+      fs.mkdirSync(phoneDataDir(snap), { recursive: true });
+      const { width, height, dpi } = resParts(snap.resolution);
+      await runDocker(['run', '-d', '--privileged', '--name', name,
+        '-v', '/dev/binderfs:/dev/binderfs',
+        '-v', phoneDataDir(snap) + ':/data',
+        '--memory=' + snap.ramGB + 'g', '--cpus=' + snap.cores,
+        '-p', '127.0.0.1:' + snap.adbPort + ':5555',
+        image,
+        'androidboot.redroid_width=' + width,
+        'androidboot.redroid_height=' + height,
+        'androidboot.redroid_dpi=' + dpi], 60000);
+    }
+    // (d) Android ke poori tarah boot hone ka intezar (har 3s check, zyada se zyada 180s)
+    const deadline = Date.now() + 180000;
+    let booted = false, deadSince = null;
+    while (Date.now() < deadline) {
+      let alive = false;
+      try { alive = (await runDocker(['inspect', '-f', '{{.State.Running}}', name])).trim() === 'true'; } catch { alive = false; }
+      if (!alive) {
+        if (!deadSince) deadSince = Date.now();
+        if (Date.now() - deadSince > 9000) {
+          let logs = '';
+          try { logs = String(await runDocker(['logs', '--tail', '20', name]) || '').trim().replace(/\s+/g, ' '); } catch { }
+          throw new Error('Phone container stopped while starting.' + (logs ? ' Logs: ' + logs.slice(0, 180) : ''));
+        }
+      } else {
+        deadSince = null;
+        try {
+          if ((await runDocker(['exec', name, '/system/bin/getprop', 'sys.boot_completed'])).trim() === '1') { booted = true; break; }
+        } catch { /* Android abhi uth raha hai */ }
+      }
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    if (!booted) throw new Error('boot timeout');
+    mutatePhone(phoneId, ph => {
+      if (ph.status !== 'starting') return; // beech me stop/delete ho gaya ho to hath na lagao
+      ph.status = 'running'; ph.startedAt = Date.now(); ph.lastError = null;
+    });
+  } catch (e) {
+    mutatePhone(phoneId, ph => {
+      if (ph.status !== 'starting') return;
+      ph.status = 'error'; ph.startedAt = null; ph.lastError = shortErr(e);
+    });
+  } finally {
+    startingSet.delete(phoneId);
+  }
+}
+
 // Doosre MyDroidGrid server ki halat check karna (uska public /api/config parh kar)
 function checkServer(host, port) {
   return new Promise(resolve => {
@@ -187,7 +305,21 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/resources' && req.method === 'GET') return send(res, 200, resourcePool(phones));
 
-    if (p === '/api/phones' && req.method === 'GET') return send(res, 200, { phones, pool: resourcePool(phones) });
+    if (p === '/api/phones' && req.method === 'GET') {
+      const engine = await engineStatus();
+      let changed = false;
+      for (const ph of phones) {
+        if (ph.status !== 'running') continue;
+        let alive = false;
+        try { alive = (await runDocker(['inspect', '-f', '{{.State.Running}}', containerName(ph)])).trim() === 'true'; } catch { alive = false; }
+        if (!alive) {
+          if (ph.startedAt) ph.runtimeMinutes += Math.round((Date.now() - ph.startedAt) / 60000);
+          ph.status = 'stopped'; ph.startedAt = null; changed = true;
+        }
+      }
+      if (changed) saveJson('phones.json', phones);
+      return send(res, 200, { phones, pool: resourcePool(phones), engine });
+    }
 
     if (p === '/api/phones' && req.method === 'POST') {
       const b = await readBody(req);
@@ -198,6 +330,7 @@ const server = http.createServer(async (req, res) => {
       if (err) return send(res, 400, { error: err });
       const proxy = cleanProxy(b.proxy);
       if (proxy === 'INVALID') return send(res, 400, { error: 'Proxy ka IP/hostname ya port sahi nahi hai.' });
+      const adbPort = nextAdbPort(phones);
       const phone = {
         id: crypto.randomUUID(),
         ownerId: user.id,
@@ -206,6 +339,8 @@ const server = http.createServer(async (req, res) => {
         ...candidate,
         proxy,
         resolution: CONFIG.resolutions.includes(b.resolution) ? b.resolution : '720x1280',
+        adbPort,
+        lastError: null,
         status: 'stopped',
         runtimeMinutes: 0,
         startedAt: null,
@@ -221,14 +356,37 @@ const server = http.createServer(async (req, res) => {
       if (!phone) return send(res, 404, { error: 'Phone nahi mila.' });
       const action = m[2];
       if (req.method === 'DELETE' && !action) {
+        try { await runDocker(['rm', '-f', containerName(phone)]); } catch { /* container na ho to bhi aage barho */ }
+        try { fs.rmSync(phoneDataDir(phone), { recursive: true, force: true }); } catch { }
         phones = phones.filter(x => x.id !== phone.id); saveJson('phones.json', phones);
         return send(res, 200, { ok: true, pool: resourcePool(phones) });
       }
-      if (req.method === 'POST' && action === 'start') { phone.status = 'running'; phone.startedAt = Date.now(); }
-      if (req.method === 'POST' && (action === 'stop' || action === 'restart')) {
+      if (req.method === 'POST' && action === 'start') {
+        if (phone.status !== 'running' && phone.status !== 'starting' && !startingSet.has(phone.id)) {
+          if (!phone.adbPort) phone.adbPort = nextAdbPort(phones, phone.id);
+          phone.status = 'starting'; phone.lastError = null;
+          saveJson('phones.json', phones);
+          startPipeline(phone.id, 'start'); // background — jawab foran jata hai
+        }
+        return send(res, 200, { phone, pool: resourcePool(phones) });
+      }
+      if (req.method === 'POST' && action === 'stop') {
+        try { await runDocker(['stop', '-t', '5', containerName(phone)]); } catch { /* pehle se band ho to bhi theek */ }
         if (phone.startedAt) phone.runtimeMinutes += Math.round((Date.now() - phone.startedAt) / 60000);
-        phone.startedAt = action === 'restart' ? Date.now() : null;
-        phone.status = action === 'restart' ? 'running' : 'stopped';
+        phone.startedAt = null; phone.status = 'stopped'; phone.lastError = null;
+        saveJson('phones.json', phones);
+        return send(res, 200, { phone, pool: resourcePool(phones) });
+      }
+      if (req.method === 'POST' && action === 'restart') {
+        if (phone.status !== 'starting' && !startingSet.has(phone.id)) {
+          if (phone.startedAt) phone.runtimeMinutes += Math.round((Date.now() - phone.startedAt) / 60000);
+          phone.startedAt = null;
+          if (!phone.adbPort) phone.adbPort = nextAdbPort(phones, phone.id);
+          phone.status = 'starting'; phone.lastError = null;
+          saveJson('phones.json', phones);
+          startPipeline(phone.id, 'restart'); // background
+        }
+        return send(res, 200, { phone, pool: resourcePool(phones) });
       }
       if (req.method === 'PATCH' && action === 'resources') {
         if (phone.status === 'running') return send(res, 400, { error: 'Pehle phone STOP karo, phir RAM/Cores badlo.' });

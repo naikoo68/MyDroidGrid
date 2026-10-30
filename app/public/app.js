@@ -45,7 +45,7 @@ async function showDashboard() {
   el('landing').classList.add('hidden');
   el('dashboard').classList.remove('hidden');
   el('navAuthBtn').textContent = 'My Phones';
-  renderPool(pool); renderPhones(phones, pool); renderServers();
+  renderPool(pool); renderPhones(phones, pool); syncStartingPoll(phones); renderServers();
 }
 
 async function renderServers() {
@@ -86,6 +86,27 @@ function renderPool(pool) {
   el('phoneCount').textContent = pool.phoneCount + ' / ' + pool.maxPhones + ' phones';
   el('pool').innerHTML = bar('RAM', pool.used.ramGB, pool.total.ramGB, 'GB') + bar('CPU cores', pool.used.cores, pool.total.cores, '') + bar('Storage', pool.used.storageGB, pool.total.storageGB, 'GB');
 }
+function phoneActions(ph) {
+  if (ph.status === 'starting') return '<span class="starting-note">Starting...</span>';
+  const main = ph.status === 'running'
+    ? `<button class="open-btn" onclick="openPhone('${ph.id}')">Open Phone</button><button onclick="act('${ph.id}','stop')">Stop</button><button onclick="act('${ph.id}','restart')">Restart</button>`
+    : `<button onclick="act('${ph.id}','start')">Start</button><button onclick="editRes('${ph.id}',${ph.ramGB},${ph.cores})">RAM / Cores</button>`;
+  return main + `<button onclick="openProxy('${ph.id}')">Proxy</button><button class="del" onclick="delPhone('${ph.id}')">Delete</button>`;
+}
+let startingPoll = null;
+function syncStartingPoll(phones) {
+  const anyStarting = (phones || []).some(ph => ph.status === 'starting');
+  if (anyStarting && !startingPoll) {
+    startingPoll = setInterval(async () => {
+      try {
+        const d = await api('/api/phones');
+        renderPool(d.pool); renderPhones(d.phones, d.pool); syncStartingPoll(d.phones);
+      } catch (e) { /* agle tick par phir try hoga */ }
+    }, 3000);
+  } else if (!anyStarting && startingPoll) {
+    clearInterval(startingPoll); startingPoll = null;
+  }
+}
 function renderPhones(phones, pool) {
   window._pool = pool;
   window._phones = phones;
@@ -94,13 +115,9 @@ function renderPhones(phones, pool) {
       <h3>${escapeHtml(ph.name)} <span class="status ${ph.status}">${ph.status.toUpperCase()}</span></h3>
       <p>Android ${ph.androidVersion} · ${ph.ramGB} GB RAM · ${ph.cores} cores · ${ph.storageGB} GB<br>
       Screen ${ph.resolution} · Runtime ${ph.runtimeMinutes} min<br>
-      Proxy: ${ph.proxy ? escapeHtml(ph.proxy.host) + ':' + ph.proxy.port + ' (' + String(ph.proxy.type || 'http').toUpperCase() + ')' : 'Not set — server ki IP'}</p>
+      Proxy: ${ph.proxy ? escapeHtml(ph.proxy.host) + ':' + ph.proxy.port + ' (' + String(ph.proxy.type || 'http').toUpperCase() + ')' : 'Not set — server ki IP'}${ph.status === 'error' && ph.lastError ? `<br><span class="phone-error">⚠ ${escapeHtml(ph.lastError)}</span>` : ''}</p>
       <div class="phone-actions">
-        ${ph.status === 'running'
-          ? `<button class="open-btn" onclick="openPhone('${ph.id}')">Open Phone</button><button onclick="act('${ph.id}','stop')">Stop</button><button onclick="act('${ph.id}','restart')">Restart</button>`
-          : `<button onclick="act('${ph.id}','start')">Start</button><button onclick="editRes('${ph.id}',${ph.ramGB},${ph.cores})">RAM / Cores</button>`}
-        <button onclick="openProxy('${ph.id}')">Proxy</button>
-        <button class="del" onclick="delPhone('${ph.id}')">Delete</button>
+        ${phoneActions(ph)}
       </div>
     </div>`).join('') : '<div class="card"><h3>No phones yet</h3><p>Press “Create Phone” — choose the version, RAM, cores and storage yourself.</p></div>';
 }
@@ -109,7 +126,7 @@ function openPhone(id) {
   const ph = (window._phones || []).find(x => x.id === id); if (!ph) return;
   el('screenTitle').textContent = ph.name + ' — Android ' + ph.androidVersion;
   el('screenMsg').textContent = ph.status === 'running'
-    ? 'Ye phone chal raha hai. Iski live screen — touch karke chalane wali — Phase 2 engine ke sath yahin is window me khulegi.'
+    ? 'Ye phone asal me chal raha hai — Android server par boot ho chuka hai, aur Start/Stop ab asal engine se jude hue hain. Iski live screen — touch karke chalane wali — agle step (screen wiring) me yahin is window me khulegi.'
     : 'Ye phone abhi band hai. Pehle card se Start dabao — phir iski screen yahan khulegi.';
   el('screenNote').textContent = `Screen ${ph.resolution} · ${ph.ramGB} GB RAM · ${ph.cores} cores · Proxy: ${ph.proxy ? ph.proxy.host + ':' + ph.proxy.port : 'server IP'}`;
   el('screenModal').classList.remove('hidden');
@@ -142,7 +159,7 @@ async function clearProxy() {
 }
 function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-async function act(id, action) { const { phones, pool } = await api(`/api/phones/${id}/${action}`, 'POST'); renderPool(pool); const d = await api('/api/phones'); renderPool(d.pool); renderPhones(d.phones, d.pool); }
+async function act(id, action) { const { phones, pool } = await api(`/api/phones/${id}/${action}`, 'POST'); renderPool(pool); const d = await api('/api/phones'); renderPool(d.pool); renderPhones(d.phones, d.pool); syncStartingPoll(d.phones); }
 async function delPhone(id) { if (!confirm('Delete this phone? Its apps and accounts inside it will be gone.')) return; await api(`/api/phones/${id}`, 'DELETE'); showDashboard(); }
 async function editRes(id, ram, cores) {
   const r = prompt('RAM (GB) — options: ' + CFG.ramOptionsGB.join(', '), ram); if (r === null) return;

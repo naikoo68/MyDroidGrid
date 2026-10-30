@@ -75,6 +75,7 @@ if ! lsmod | grep -q '^binder_linux'; then
   modprobe ashmem_linux 2>/dev/null || true
 fi
 printf 'binder_linux\nashmem_linux\n' > /etc/modules-load.d/mydroidgrid.conf
+printf 'options binder_linux devices="binder,hwbinder,vndbinder"\n' > /etc/modprobe.d/binder_linux.conf
 if lsmod | grep -q '^binder_linux' && lsmod | grep -q '^ashmem_linux'; then
   echo "Kernel modules: OK — asal phones chal sakte hain."
 else
@@ -84,6 +85,7 @@ fi
 
 say "Step 3/5: MyDroidGrid files + apne server ki setting khud lagana"
 id -u "$SERVICE_USER" >/dev/null 2>&1 || useradd --system --home "$INSTALL_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
+usermod -aG docker "$SERVICE_USER" || true
 mkdir -p "$INSTALL_DIR" "$MDG_PHONE_DATA_DIR"
 # Purani data (accounts/phones list) mehfooz rakho — update par kuch nahi urta
 [[ -d "$INSTALL_DIR/data" ]] && cp -a "$INSTALL_DIR/data" /tmp/mdg-data-backup
@@ -107,6 +109,8 @@ Wants=docker.service
 Type=simple
 User=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
+ExecStartPre=-+/usr/sbin/modprobe binder_linux
+ExecStartPre=-+/bin/sh -c 'mkdir -p /dev/binderfs; mountpoint -q /dev/binderfs || mount -t binder binder /dev/binderfs'
 ExecStart=/usr/bin/node $INSTALL_DIR/server.js
 Restart=always
 RestartSec=3
