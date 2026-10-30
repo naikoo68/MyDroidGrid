@@ -99,6 +99,12 @@ MDG_HOST_RAM_GB="$(awk '/MemTotal/ {print int($2/1048576)}' /proc/meminfo)"
 MDG_HOST_CORES="$(nproc)"
 export MDG_HOST_RAM_GB MDG_HOST_CORES
 node "$INSTALL_DIR/configure.js" "$INSTALL_DIR"
+# Purani jagah (app ke data folder ke andar) phones ka data ho aur nayi
+# jagah khali ho, to use utha kar nayi jagah le ao — update par koi phone
+# apna data nahi khoyega.
+if [[ -d "$INSTALL_DIR/data/phone-data" ]] && [[ -z "$(ls -A "$MDG_PHONE_DATA_DIR" 2>/dev/null)" ]]; then
+  cp -a "$INSTALL_DIR/data/phone-data/." "$MDG_PHONE_DATA_DIR/" 2>/dev/null || true
+fi
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR" "$MDG_PHONE_DATA_DIR"
 
 say "Step 4/5: Service banana (server restart ho to website khud chalegi)"
@@ -112,6 +118,7 @@ Wants=docker.service
 Type=simple
 User=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
+Environment=MDG_PHONE_DATA_DIR=$MDG_PHONE_DATA_DIR
 ExecStartPre=-+/usr/sbin/modprobe binder_linux
 ExecStartPre=-+/bin/sh -c 'mkdir -p /dev/binderfs; mountpoint -q /dev/binderfs || mount -t binder binder /dev/binderfs'
 ExecStart=/usr/bin/node $INSTALL_DIR/server.js

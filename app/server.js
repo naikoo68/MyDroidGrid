@@ -113,7 +113,9 @@ function validateAllocation(phones, candidate, excludeId = null) {
 // ---------- Phase 2 engine: asal Redroid containers (Docker) ----------
 // Har phone ka ek container: naam mdg-<phoneId>, data us ke apne folder me.
 // Docker ki koi ghalti request ko crash nahi karti — error phone.lastError me jati hai.
-const PHONE_DATA = path.join(DATA, 'phone-data');
+// Phones ka data: installer ne jagah di ho (MDG_PHONE_DATA_DIR — masalan
+// PC par NVMe ki bari partition) to wahan, warna app ke data folder me.
+const PHONE_DATA = process.env.MDG_PHONE_DATA_DIR || path.join(DATA, 'phone-data');
 const startingSet = new Set();
 
 async function runDocker(args, timeout = 30000) {
@@ -254,7 +256,7 @@ async function startPipeline(phoneId, mode) {
     let exists = true;
     try { await runDocker(['inspect', name]); } catch { exists = false; }
     if (exists && mode === 'restart') {
-      await runDocker(['restart', name], 60000);
+      await runDocker(['restart', '-t', '25', name], 90000);
     } else if (exists) {
       await runDocker(['start', name], 60000);
     } else {
@@ -652,7 +654,7 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'POST' && action === 'stop') {
         stopFrameLoop(phone.id);
-        try { await runDocker(['stop', '-t', '5', containerName(phone)]); } catch { /* pehle se band ho to bhi theek */ }
+        try { await runDocker(['stop', '-t', '25', containerName(phone)]); } catch { /* pehle se band ho to bhi theek */ }
         if (phone.startedAt) phone.runtimeMinutes += Math.round((Date.now() - phone.startedAt) / 60000);
         phone.startedAt = null; phone.status = 'stopped'; phone.lastError = null;
         saveJson('phones.json', phones);
