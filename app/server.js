@@ -185,6 +185,16 @@ async function applyProxy(phone) {
   } catch { /* phone band ho to khamoshi se chor do — agle Start par lag jayegi */ }
 }
 
+// Phone ki timezone/language lagana (PhoneGrid ki tarah creation par choice).
+// Timezone foran lagti hai; language (locale) persist hoti hai — poori tarah
+// agle restart par nazar ati hai.
+async function applyLocale(phone) {
+  try {
+    if (phone.timezone) await runDocker(['exec', containerName(phone), '/system/bin/setprop', 'persist.sys.timezone', phone.timezone], 10000);
+    if (phone.language) await runDocker(['exec', containerName(phone), '/system/bin/setprop', 'persist.sys.locale', phone.language], 10000);
+  } catch { /* best effort */ }
+}
+
 function imageFor(version, gapps) { return gapps ? `redroid/redroid:${version}.0.0_mindthegapps` : `redroid/redroid:${version}.0.0-latest`; }
 function resParts(resolution) {
   const parts = String(resolution || '720x1280').split('x').map(Number);
@@ -276,6 +286,7 @@ async function startPipeline(phoneId, mode) {
     }
     if (!booted) throw new Error('boot timeout');
     await applyProxy(snap);
+    await applyLocale(snap);
     mutatePhone(phoneId, ph => {
       if (ph.status !== 'starting') return; // beech me stop/delete ho gaya ho to hath na lagao
       ph.status = 'running'; ph.startedAt = Date.now(); ph.lastError = null;
@@ -369,6 +380,100 @@ const server = http.createServer(async (req, res) => {
     return send(res, 404, { error: 'Route nahi mila.' });
   }
 
+  if (p.startsWith('/api/proxies') || p.startsWith('/api/apps')) {
+    const user = authUser(req);
+    if (!user) return send(res, 401, { error: 'Login required.' });
+
+    // ---- Proxy Library (PhoneGrid ki Proxy Management ki tarah) ----
+    if (p === '/api/proxies' && req.method === 'GET') {
+      const all = loadJson('proxies.json', []);
+      return send(res, 200, { proxies: all.filter(x => x.ownerId === user.id) });
+    }
+    if (p === '/api/proxies' && req.method === 'POST') {
+      const b = await readBody(req);
+      const proxy = cleanProxy(b);
+      if (!proxy || proxy === 'INVALID') return send(res, 400, { error: 'Proxy ka IP/hostname aur sahi port likho.' });
+      const all = loadJson('proxies.json', []);
+      const rec = { id: crypto.randomUUID(), ownerId: user.id, name: String(b.name || proxy.host).slice(0, 40), ...proxy, createdAt: Date.now() };
+      all.push(rec); saveJson('proxies.json', all);
+      return send(res, 200, { proxy: rec });
+    }
+    const pm = p.match(/^\/api\/proxies\/([^/]+)$/);
+    if (pm && req.method === 'DELETE') {
+      let all = loadJson('proxies.json', []);
+      if (!all.some(x => x.id === pm[1] && x.ownerId === user.id)) return send(res, 404, { error: 'Proxy nahi mili.' });
+      all = all.filter(x => x.id !== pm[1]); saveJson('proxies.json', all);
+      return send(res, 200, { ok: true });
+    }
+
+    // ---- Application Center (APK upload + phones me install) ----
+    if (p === '/api/apps' && req.method === 'GET') {
+      const all = loadJson('apks.json', []);
+      return send(res, 200, { apps: all.filter(x => x.ownerId === user.id) });
+    }
+    if (p === '/api/apps/upload' && req.method === 'POST') {
+      const name = String(url.searchParams.get('name') || 'app.apk').replace(/[^\w.\- ]/g, '').slice(0, 80);
+      if (!/\.apk$/i.test(name)) return send(res, 400, { error: 'Sirf .apk file upload karo.' });
+      const dir = path.join(DATA, 'apks', user.id);
+      fs.mkdirSync(dir, { recursive: true });
+      const file = Date.now() + '-' + name;
+      const dest = path.join(dir, file);
+      const MAX = 300 * 1024 * 1024;
+      let size = 0, tooBig = false;
+      await new Promise(resolve => {
+        const ws = fs.createWriteStream(dest);
+        req.on('data', c => {
+          size += c.length;
+          if (size > MAX && !tooBig) { tooBig = true; req.unpipe(ws); ws.destroy(); resolve(); }
+        });
+        req.pipe(ws);
+        ws.on('finish', resolve);
+        ws.on('error', resolve);
+        req.on('error', resolve);
+      });
+      if (tooBig || !size) {
+        try { fs.rmSync(dest, { force: true }); } catch { }
+        return send(res, 400, { error: tooBig ? 'File bohat bari hai (300 MB tak).' : 'File khali hai — dobara try karo.' });
+      }
+      const all = loadJson('apks.json', []);
+      const rec = { id: crypto.randomUUID(), ownerId: user.id, name, file, size, uploadedAt: Date.now() };
+      all.push(rec); saveJson('apks.json', all);
+      return send(res, 200, { app: rec });
+    }
+    const am = p.match(/^\/api\/apps\/([^/]+)(?:\/(install))?$/);
+    if (am) {
+      let all = loadJson('apks.json', []);
+      const app = all.find(x => x.id === am[1] && x.ownerId === user.id);
+      if (!app) return send(res, 404, { error: 'App nahi mili.' });
+      if (req.method === 'DELETE' && !am[2]) {
+        try { fs.rmSync(path.join(DATA, 'apks', user.id, app.file), { force: true }); } catch { }
+        all = all.filter(x => x.id !== am[1]); saveJson('apks.json', all);
+        return send(res, 200, { ok: true });
+      }
+      if (req.method === 'POST' && am[2] === 'install') {
+        const b = await readBody(req);
+        const ids = Array.isArray(b.phoneIds) ? b.phoneIds : [];
+        if (!ids.length) return send(res, 400, { error: 'Pehle kam se kam ek phone chuno.' });
+        const phones = loadJson('phones.json', []);
+        const src = path.join(DATA, 'apks', user.id, app.file);
+        const results = [];
+        for (const pid of ids) {
+          const ph = phones.find(x => x.id === pid);
+          if (!ph) { results.push({ phoneId: pid, ok: false, error: 'Phone nahi mila.' }); continue; }
+          if (ph.status !== 'running') { results.push({ phoneId: pid, name: ph.name, ok: false, error: 'Phone band hai — pehle Start karo.' }); continue; }
+          try {
+            await runDocker(['cp', src, containerName(ph) + ':/data/local/tmp/mdg-app.apk'], 120000);
+            const out = String(await runDocker(['exec', containerName(ph), '/system/bin/pm', 'install', '-r', '/data/local/tmp/mdg-app.apk'], 180000) || '');
+            if (/Success/i.test(out)) results.push({ phoneId: pid, name: ph.name, ok: true });
+            else results.push({ phoneId: pid, name: ph.name, ok: false, error: out.trim().slice(0, 160) || 'Install fail ho gaya.' });
+          } catch (e) { results.push({ phoneId: pid, name: ph.name, ok: false, error: shortErr(e) }); }
+        }
+        return send(res, 200, { results });
+      }
+    }
+    return send(res, 404, { error: 'Route nahi mila.' });
+  }
+
   if (p.startsWith('/api/phones') || p === '/api/resources') {
     // screen.png <img> tag se load hoti hai — wahan Authorization header nahi ja
     // sakta, is liye SIRF us ek GET route par token query param (?t=) se bhi chalega.
@@ -432,8 +537,13 @@ const server = http.createServer(async (req, res) => {
       };
       const err = validateAllocation(phones, candidate);
       if (err) return send(res, 400, { error: err });
-      const proxy = cleanProxy(b.proxy);
+      let proxy = cleanProxy(b.proxy);
       if (proxy === 'INVALID') return send(res, 400, { error: 'Proxy ka IP/hostname ya port sahi nahi hai.' });
+      if (b.proxyId) {
+        // Proxy Library se chuni hui proxy — usi ki values is phone par lagti hain
+        const rec = loadJson('proxies.json', []).find(x => x.id === b.proxyId && x.ownerId === user.id);
+        if (rec) proxy = { type: rec.type, host: rec.host, port: rec.port, username: rec.username, password: rec.password };
+      }
       const adbPort = nextAdbPort(phones);
       const phone = {
         id: crypto.randomUUID(),
@@ -443,6 +553,8 @@ const server = http.createServer(async (req, res) => {
         gapps: b.gapps === true,
         ...candidate,
         proxy,
+        timezone: /^[A-Za-z_]+\/[A-Za-z_]+$/.test(String(b.timezone || '')) ? String(b.timezone) : null,
+        language: /^[a-z]{2}-[A-Z]{2}$/.test(String(b.language || '')) ? String(b.language) : null,
         resolution: CONFIG.resolutions.includes(b.resolution) ? b.resolution : '720x1280',
         adbPort,
         lastError: null,

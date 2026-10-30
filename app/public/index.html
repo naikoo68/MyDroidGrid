@@ -70,6 +70,15 @@
   </section>
   <section id="servers" class="grid"></section>
   <p class="note">Har server apna alag system hai — yahan se sab ki halat (online/offline) dikhegi aur har ek ka dashboard ek click par khulega.</p>
+
+  <section class="dash-head">
+    <h2>Tools</h2>
+    <div>
+      <button class="btn big" onclick="openApps()">📦 Application Center</button>
+      <button class="btn big" onclick="openProxyLib()">🌐 Proxy Library</button>
+    </div>
+  </section>
+  <p class="note">Application Center: APK ek dafa upload karo, phir kai phones me ek sath install karo. Proxy Library: proxies ek dafa save karo, phir kisi bhi phone ko ek click me lagao.</p>
 </main>
 
 <div id="authModal" class="modal hidden">
@@ -94,6 +103,9 @@
     <label>CPU cores<select id="fCores"></select></label>
     <label>Storage (GB)<select id="fStorage"></select></label>
     <label>Screen<select id="fRes"></select></label>
+    <label>Timezone (optional)<select id="fTimezone"><option value="">— Server default —</option><option>Asia/Karachi</option><option>Asia/Kolkata</option><option>Asia/Dhaka</option><option>Asia/Dubai</option><option>Asia/Singapore</option><option>Asia/Tokyo</option><option>Europe/London</option><option>Europe/Berlin</option><option>America/New_York</option><option>America/Chicago</option><option>America/Los_Angeles</option><option>Australia/Sydney</option><option>UTC</option></select></label>
+    <label>Language (optional)<select id="fLanguage"><option value="">— Default (English) —</option><option value="en-US">English (US)</option><option value="ur-PK">Urdu</option><option value="hi-IN">Hindi</option><option value="ar-SA">Arabic</option><option value="es-ES">Spanish</option><option value="fr-FR">French</option><option value="de-DE">German</option><option value="pt-BR">Portuguese</option><option value="ru-RU">Russian</option><option value="zh-CN">Chinese</option></select></label>
+    <label>Proxy Library se chuno (optional)<select id="fProxyLib" onchange="fProxyLibFill()"><option value="">— Library se nahi, neeche hath se likho —</option></select></label>
     <label>Proxy type (optional)<select id="fProxyType"><option value="http">HTTP</option><option value="socks5">SOCKS5</option></select></label>
     <label>Proxy IP / host (optional)<input id="fProxyHost" placeholder="e.g. 45.90.10.20 — khali rakho to server ki apni IP"></label>
     <label>Proxy port<input id="fProxyPort" type="number" placeholder="e.g. 8080"></label>
@@ -138,6 +150,10 @@
       <input id="typeText" type="text" placeholder="Yahan likho — phone me chala jayega (email, password...)" autocomplete="off" style="flex:1">
       <button onclick="sendScreenText()">Likho ➤</button>
     </div>
+    <div class="screen-controls hidden" id="syncControls" style="flex-direction:column;align-items:stretch;gap:4px">
+      <label style="font-weight:600"><input type="checkbox" id="syncOn" style="width:auto"> 🔁 Synchronizer — jo action is phone par karo, in phones par bhi ho:</label>
+      <div id="syncTargets"></div>
+    </div>
     <p class="note" id="screenNote"></p>
     <button class="btn ghost full" onclick="closeScreen()">Close</button>
   </div>
@@ -146,7 +162,8 @@
 <div id="proxyModal" class="modal hidden">
   <div class="modal-box">
     <h3 id="proxyTitle">Phone Proxy</h3>
-    <p class="note">Har phone ki apni proxy hoti hai. Proxy lagao ge to is phone ka internet us proxy se jayega; khali rakho ge to phone server ki apni IP use karega. Proxy badalne ke baad phone ko ek dafa Restart karna hoga taake nayi proxy lag jaye.</p>
+    <p class="note">Har phone ki apni proxy hoti hai. Proxy lagao ge to is phone ka internet us proxy se jayega; khali rakho ge to phone server ki apni IP use karega. Chal rahe phone par HTTP proxy foran lag jati hai.</p>
+    <label>Proxy Library se chuno<select id="pProxyLib" onchange="pProxyLibFill()"><option value="">— Library se nahi —</option></select></label>
     <label>Proxy type<select id="pProxyType"><option value="http">HTTP</option><option value="socks5">SOCKS5</option></select></label>
     <label>Proxy IP / host<input id="pProxyHost" placeholder="e.g. 45.90.10.20"></label>
     <label>Proxy port<input id="pProxyPort" type="number" placeholder="e.g. 8080"></label>
@@ -156,6 +173,35 @@
     <button class="btn big full" onclick="submitProxy()">Save Proxy</button>
     <button class="btn danger full" onclick="clearProxy()">Proxy Hatao (server IP use karo)</button>
     <button class="btn ghost full" onclick="closeProxy()">Cancel</button>
+  </div>
+</div>
+
+<div id="proxyLibModal" class="modal hidden">
+  <div class="modal-box">
+    <h3>🌐 Proxy Library</h3>
+    <p class="note">Proxies ek dafa yahan save karo — phir phone banate waqt ya kisi phone ke Proxy button se ek click me laga do.</p>
+    <div id="proxyLibList"></div>
+    <label>Naam<input id="plName" placeholder="e.g. US Proxy 1"></label>
+    <label>Type<select id="plType"><option value="http">HTTP</option><option value="socks5">SOCKS5</option></select></label>
+    <label>IP / host<input id="plHost" placeholder="e.g. 45.90.10.20"></label>
+    <label>Port<input id="plPort" type="number" placeholder="e.g. 8080"></label>
+    <label>Username (agar hai)<input id="plUser"></label>
+    <label>Password (agar hai)<input id="plPass" type="password"></label>
+    <p id="proxyLibError" class="error"></p>
+    <button class="btn big full" onclick="submitProxyLib()">+ Proxy Save Karo</button>
+    <button class="btn ghost full" onclick="closeProxyLib()">Close</button>
+  </div>
+</div>
+
+<div id="appsModal" class="modal hidden">
+  <div class="modal-box">
+    <h3>📦 Application Center</h3>
+    <p class="note">APK upload karo, phir ek ya zyada running phones me ek sath install karo.</p>
+    <label>APK file<input id="apkFile" type="file" accept=".apk"></label>
+    <button class="btn big full" onclick="uploadApk()">⬆ Upload APK</button>
+    <p id="appsMsg" class="note"></p>
+    <div id="appsList"></div>
+    <button class="btn ghost full" onclick="closeApps()">Close</button>
   </div>
 </div>
 
