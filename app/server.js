@@ -131,7 +131,7 @@ function shortErr(e) {
 }
 function containerName(phone) { return 'mdg-' + phone.id; }
 function phoneDataDir(phone) { return path.join(PHONE_DATA, phone.id); }
-function imageFor(version) { return `redroid/redroid:${version}.0.0-latest`; }
+function imageFor(version, gapps) { return gapps ? `redroid/redroid:${version}.0.0_mindthegapps` : `redroid/redroid:${version}.0.0-latest`; }
 function resParts(resolution) {
   const parts = String(resolution || '720x1280').split('x').map(Number);
   const width = parts[0] || 720, height = parts[1] || 1280;
@@ -170,10 +170,14 @@ async function startPipeline(phoneId, mode) {
     if (!eng.docker) throw new Error('Docker is not running on this server — the phone engine cannot start.');
     if (!eng.binder) throw new Error('Android kernel support (binder) is not ready on this server — the phone cannot start.');
     // (b) Android image maujood hai? na ho to download karo
-    const image = imageFor(snap.androidVersion);
+    // (Play Store wali image server par bani hui hoti hai — wo download nahi hoti)
+    const image = imageFor(snap.androidVersion, snap.gapps);
     let haveImage = true;
     try { await runDocker(['image', 'inspect', image]); } catch { haveImage = false; }
-    if (!haveImage) await runDocker(['pull', image], 600000);
+    if (!haveImage) {
+      if (snap.gapps) throw new Error('Google Apps (Play Store) image is server par bani hui nahi hai — Android ' + snap.androidVersion + ' ke liye pehle use banana hoga.');
+      await runDocker(['pull', image], 600000);
+    }
     // (c) container hai to start/restart, warna naya banao
     let exists = true;
     try { await runDocker(['inspect', name]); } catch { exists = false; }
@@ -194,8 +198,9 @@ async function startPipeline(phoneId, mode) {
         'androidboot.redroid_height=' + height,
         'androidboot.redroid_dpi=' + dpi], 60000);
     }
-    // (d) Android ke poori tarah boot hone ka intezar (har 3s check, zyada se zyada 180s)
-    const deadline = Date.now() + 180000;
+    // (d) Android ke poori tarah boot hone ka intezar (har 3s check;
+    // Play Store wale phone ki pehli boot sust hoti hai, use zyada waqt do)
+    const deadline = Date.now() + (snap.gapps ? 420000 : 180000);
     let booted = false, deadSince = null;
     while (Date.now() < deadline) {
       let alive = false;
@@ -358,6 +363,7 @@ const server = http.createServer(async (req, res) => {
         ownerId: user.id,
         name: String(b.name || 'My Phone').slice(0, 40),
         androidVersion: CONFIG.androidVersions.includes(String(b.androidVersion)) ? String(b.androidVersion) : '12',
+        gapps: b.gapps === true,
         ...candidate,
         proxy,
         resolution: CONFIG.resolutions.includes(b.resolution) ? b.resolution : '720x1280',

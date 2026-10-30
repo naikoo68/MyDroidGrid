@@ -16,7 +16,14 @@ async function init() {
   fillSelect('fStorage', CFG.storageOptionsGB, '32');
   fillSelect('fRes', CFG.resolutions, '720x1280');
   ['fVersion','fRam','fCores','fStorage'].forEach(id => el(id).addEventListener('change', createHint));
+  el('fVersion').addEventListener('change', gappsHint);
+  gappsHint();
   if (TOKEN) showDashboard().catch(() => { TOKEN = null; localStorage.removeItem('mdg_token'); });
+}
+function gappsHint() {
+  const ok = ['12', '13'].includes(el('fVersion').value);
+  el('fGapps').disabled = !ok;
+  if (!ok) el('fGapps').checked = false;
 }
 function fillSelect(id, values, selected) {
   el(id).innerHTML = values.map(v => `<option value="${v}" ${String(v) === String(selected) ? 'selected' : ''}>${v}</option>`).join('');
@@ -113,7 +120,7 @@ function renderPhones(phones, pool) {
   el('phones').innerHTML = phones.length ? phones.map(ph => `
     <div class="card">
       <h3>${escapeHtml(ph.name)} <span class="status ${ph.status}">${ph.status.toUpperCase()}</span></h3>
-      <p>Android ${ph.androidVersion} · ${ph.ramGB} GB RAM · ${ph.cores} cores · ${ph.storageGB} GB<br>
+      <p>Android ${ph.androidVersion}${ph.gapps ? ' · Play Store' : ''} · ${ph.ramGB} GB RAM · ${ph.cores} cores · ${ph.storageGB} GB<br>
       Screen ${ph.resolution} · Runtime ${ph.runtimeMinutes} min<br>
       Proxy: ${ph.proxy ? escapeHtml(ph.proxy.host) + ':' + ph.proxy.port + ' (' + String(ph.proxy.type || 'http').toUpperCase() + ')' : 'Not set — server ki IP'}${ph.status === 'error' && ph.lastError ? `<br><span class="phone-error">⚠ ${escapeHtml(ph.lastError)}</span>` : ''}</p>
       <div class="phone-actions">
@@ -275,7 +282,7 @@ async function submitCreate() {
   try {
     const proxyHost = el('fProxyHost').value.trim();
     const proxy = proxyHost ? { type: el('fProxyType').value, host: proxyHost, port: Number(el('fProxyPort').value || 0), username: el('fProxyUser').value.trim(), password: el('fProxyPass').value } : null;
-    await api('/api/phones', 'POST', { name: el('fName').value.trim() || 'My Phone', androidVersion: el('fVersion').value, ramGB: Number(el('fRam').value), cores: Number(el('fCores').value), storageGB: Number(el('fStorage').value), resolution: el('fRes').value, proxy });
+    await api('/api/phones', 'POST', { name: el('fName').value.trim() || 'My Phone', androidVersion: el('fVersion').value, gapps: el('fGapps').checked, ramGB: Number(el('fRam').value), cores: Number(el('fCores').value), storageGB: Number(el('fStorage').value), resolution: el('fRes').value, proxy });
     closeCreate(); showDashboard();
   } catch (e) { el('createError').textContent = e.message; }
 }
