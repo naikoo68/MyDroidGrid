@@ -48,6 +48,8 @@ say "Step 1/5: Zaroori software (Node.js + Docker)"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq ca-certificates curl jq ufw >/dev/null
+# ffmpeg: live screen ki tasveer halki (JPEG) karne ke liye — na mile to bhi site chalegi (PNG par)
+apt-get install -y -qq ffmpeg >/dev/null 2>&1 || true
 
 need_node=1
 if command -v node >/dev/null 2>&1; then
@@ -76,10 +78,11 @@ if ! lsmod | grep -q '^binder_linux'; then
 fi
 printf 'binder_linux\nashmem_linux\n' > /etc/modules-load.d/mydroidgrid.conf
 printf 'options binder_linux devices="binder,hwbinder,vndbinder"\n' > /etc/modprobe.d/binder_linux.conf
-if lsmod | grep -q '^binder_linux' && lsmod | grep -q '^ashmem_linux'; then
+if lsmod | grep -q '^binder_linux'; then
   echo "Kernel modules: OK — asal phones chal sakte hain."
+  lsmod | grep -q '^ashmem_linux' || echo "(ashmem nahi hai — koi baat nahi, naye Android versions us ke baghair chalte hain.)"
 else
-  warn "Kernel modules is server ke kernel ($(uname -r)) par load nahi huay."
+  warn "Kernel module (binder) is server ke kernel ($(uname -r)) par load nahi hua."
   warn "Website/dashboard chalega, lekin asal phone engine ke liye kernel support chahiye hoga."
 fi
 

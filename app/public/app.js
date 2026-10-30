@@ -132,11 +132,12 @@ function renderPhones(phones, pool) {
 // ---------- Live screen: screencap frames + touch ----------
 // Screen asal Android se bar bar screenshot le kar dikhayi jati hai;
 // generation counter band/purani window ki purani requests ko rokta hai.
-const screenStream = { phoneId: null, gen: 0, timer: null, counter: 0, errors: 0 };
+const screenStream = { phoneId: null, gen: 0, timer: null, counter: 0, errors: 0, shown: false };
 
 function startScreenStream(id) {
   screenStream.phoneId = id;
   screenStream.errors = 0;
+  screenStream.shown = false;
   loadScreenFrame(++screenStream.gen);
 }
 function stopScreenStream() {
@@ -233,17 +234,23 @@ const screenImgEl = el('screenImg');
 screenImgEl.addEventListener('load', () => {
   if (!screenStream.phoneId) return;
   screenStream.errors = 0;
+  screenStream.shown = true;
   el('screenFallback').classList.add('hidden');
   screenImgEl.classList.remove('hidden');
-  scheduleScreenFrame(screenStream.gen, 600);
+  scheduleScreenFrame(screenStream.gen, 200);
 });
 screenImgEl.addEventListener('error', () => {
   if (!screenStream.phoneId) return;
   screenStream.errors++;
-  screenImgEl.classList.add('hidden');
-  el('screenFallback').classList.remove('hidden');
-  el('screenMsg').textContent = 'Screen nahi aa rahi — phone band to nahi ho gaya?';
-  if (screenStream.errors <= 5) scheduleScreenFrame(screenStream.gen, 2000);
+  // Ek adh frame miss ho jaye to screen band mat karo — pichli tasveer
+  // rehne do aur koshish jaari rakho; khali screen sirf tab jab pehla
+  // frame hi na aya ho.
+  if (!screenStream.shown) {
+    screenImgEl.classList.add('hidden');
+    el('screenFallback').classList.remove('hidden');
+    el('screenMsg').textContent = screenStream.errors < 3 ? 'Screen aa rahi hai...' : 'Screen ka intezar hai — koshish jaari hai...';
+  }
+  scheduleScreenFrame(screenStream.gen, 2000);
 });
 screenImgEl.addEventListener('pointerdown', e => {
   const r = screenImgEl.getBoundingClientRect();

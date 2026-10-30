@@ -131,6 +131,60 @@ function shortErr(e) {
 }
 function containerName(phone) { return 'mdg-' + phone.id; }
 function phoneDataDir(phone) { return path.join(PHONE_DATA, phone.id); }
+// ---------- Live frame engine ----------
+// Har running phone ke liye peeche ek halki loop chalti hai jo screen ki
+// sab se taza tasveer hamesha tayyar rakhti hai — browser ki request par
+// docker ka intezar nahi karna parta, is liye screen tez chalti hai aur
+// sust lamhon me pichli tasveer nazar aati rehti hai (khali screen nahi).
+const frameLoops = new Map(); // phoneId -> { buf, type, timer, busy, fails }
+let FFMPEG = false;
+execFileP('ffmpeg', ['-version']).then(() => { FFMPEG = true; }).catch(() => { FFMPEG = false; });
+
+async function captureFrame(phone) {
+  const png = await runDockerBuffer(['exec', containerName(phone), '/system/bin/screencap', '-p'], 15000);
+  if (!png || !png.length) return null;
+  if (!FFMPEG) return { buf: png, type: 'image/png' };
+  try {
+    const r = await execFileP('ffmpeg', ['-v', 'error', '-i', 'pipe:0', '-q:v', '7', '-f', 'image2', 'pipe:1'], { timeout: 10000, maxBuffer: 16 * 1024 * 1024, encoding: 'buffer', input: png });
+    if (r.stdout && r.stdout.length > 100) return { buf: r.stdout, type: 'image/jpeg' };
+  } catch { /* ffmpeg fail ho to PNG hi sahi */ }
+  return { buf: png, type: 'image/png' };
+}
+function startFrameLoop(phone) {
+  if (frameLoops.has(phone.id)) return;
+  const st = { buf: null, type: 'image/png', timer: null, busy: false, fails: 0 };
+  frameLoops.set(phone.id, st);
+  const tick = async () => {
+    if (!frameLoops.has(phone.id)) return;
+    if (!st.busy) {
+      st.busy = true;
+      try {
+        const f = await captureFrame(phone);
+        if (f) { st.buf = f.buf; st.type = f.type; st.fails = 0; }
+      } catch { st.fails++; }
+      st.busy = false;
+    }
+    if (frameLoops.has(phone.id)) st.timer = setTimeout(tick, st.fails >= 3 ? 3000 : 500);
+  };
+  tick();
+}
+function stopFrameLoop(id) {
+  const st = frameLoops.get(id);
+  if (st) { if (st.timer) clearTimeout(st.timer); frameLoops.delete(id); }
+}
+
+// Phone ki proxy asal me lagana. Android ka system proxy sirf HTTP ko
+// system-wide support karta hai; SOCKS5 apps ke andar lagta hai.
+async function applyProxy(phone) {
+  try {
+    if (phone.proxy && phone.proxy.type === 'http') {
+      await runDocker(['exec', containerName(phone), '/system/bin/settings', 'put', 'global', 'http_proxy', phone.proxy.host + ':' + phone.proxy.port], 10000);
+    } else {
+      await runDocker(['exec', containerName(phone), '/system/bin/settings', 'put', 'global', 'http_proxy', ':0'], 10000);
+    }
+  } catch { /* phone band ho to khamoshi se chor do — agle Start par lag jayegi */ }
+}
+
 function imageFor(version, gapps) { return gapps ? `redroid/redroid:${version}.0.0_mindthegapps` : `redroid/redroid:${version}.0.0-latest`; }
 function resParts(resolution) {
   const parts = String(resolution || '720x1280').split('x').map(Number);
@@ -200,7 +254,7 @@ async function startPipeline(phoneId, mode) {
     }
     // (d) Android ke poori tarah boot hone ka intezar (har 3s check;
     // Play Store wale phone ki pehli boot sust hoti hai, use zyada waqt do)
-    const deadline = Date.now() + (snap.gapps ? 420000 : 180000);
+    const deadline = Date.now() + (snap.gapps ? 420000 : 360000);
     let booted = false, deadSince = null;
     while (Date.now() < deadline) {
       let alive = false;
@@ -221,11 +275,15 @@ async function startPipeline(phoneId, mode) {
       await new Promise(r => setTimeout(r, 3000));
     }
     if (!booted) throw new Error('boot timeout');
+    await applyProxy(snap);
     mutatePhone(phoneId, ph => {
       if (ph.status !== 'starting') return; // beech me stop/delete ho gaya ho to hath na lagao
       ph.status = 'running'; ph.startedAt = Date.now(); ph.lastError = null;
     });
+    const fresh = loadJson('phones.json', []).find(x => x.id === phoneId);
+    if (fresh && fresh.status === 'running') startFrameLoop(fresh);
   } catch (e) {
+    stopFrameLoop(phoneId);
     mutatePhone(phoneId, ph => {
       if (ph.status !== 'starting') return;
       ph.status = 'error'; ph.startedAt = null; ph.lastError = shortErr(e);
@@ -339,9 +397,28 @@ const server = http.createServer(async (req, res) => {
         }
         let alive = false;
         try { alive = (await runDocker(['inspect', '-f', '{{.State.Running}}', containerName(ph)])).trim() === 'true'; } catch { alive = false; }
+        if (alive && !frameLoops.has(ph.id)) startFrameLoop(ph);
         if (!alive) {
           if (ph.startedAt) ph.runtimeMinutes += Math.round((Date.now() - ph.startedAt) / 60000);
           ph.status = 'stopped'; ph.startedAt = null; changed = true;
+        }
+      }
+      // Error/starting me atka phone jo asal me boot ho chuka ho (masalan
+      // service restart ke darmiyan pipeline ruk gayi ho) — khud pehchano,
+      // taake user ko bila wajah dobara Start na dabana pare.
+      for (const ph of phones) {
+        if ((ph.status !== 'error' && ph.status !== 'starting') || startingSet.has(ph.id)) continue;
+        let alive = false;
+        try { alive = (await runDocker(['inspect', '-f', '{{.State.Running}}', containerName(ph)])).trim() === 'true'; } catch { alive = false; }
+        if (!alive) {
+          if (ph.status === 'starting') { ph.status = 'stopped'; ph.startedAt = null; changed = true; }
+          continue;
+        }
+        let booted = false;
+        try { booted = (await runDocker(['exec', containerName(ph), '/system/bin/getprop', 'sys.boot_completed'])).trim() === '1'; } catch { booted = false; }
+        if (booted) {
+          ph.status = 'running'; if (!ph.startedAt) ph.startedAt = Date.now(); ph.lastError = null; changed = true;
+          startFrameLoop(ph);
         }
       }
       if (changed) saveJson('phones.json', phones);
@@ -384,14 +461,21 @@ const server = http.createServer(async (req, res) => {
       if (!phone) return send(res, 404, { error: 'Phone nahi mila.' });
       const action = m[2];
       if (req.method === 'DELETE' && !action) {
+        stopFrameLoop(phone.id);
         try { await runDocker(['rm', '-f', containerName(phone)]); } catch { /* container na ho to bhi aage barho */ }
         try { fs.rmSync(phoneDataDir(phone), { recursive: true, force: true }); } catch { }
         phones = phones.filter(x => x.id !== phone.id); saveJson('phones.json', phones);
         return send(res, 200, { ok: true, pool: resourcePool(phones) });
       }
       if (req.method === 'GET' && action === 'screen.png') {
-        // Asal screen ka ek frame (PNG) — frontend isay bar bar load karke live screen banata hai.
+        // Asal screen ka ek frame — frontend isay bar bar load karke live screen banata hai.
         if (phone.status !== 'running') { res.writeHead(400, { 'Content-Type': 'text/plain' }); return res.end('Phone is not running.'); }
+        // Frame engine ki tayyar tasveer ho to foran wahi do (tez tareeqa)
+        const fst = frameLoops.get(phone.id);
+        if (fst && fst.buf) {
+          res.writeHead(200, { 'Content-Type': fst.type, 'Cache-Control': 'no-store' });
+          return res.end(fst.buf);
+        }
         try {
           const buf = await runDockerBuffer(['exec', containerName(phone), '/system/bin/screencap', '-p'], 15000);
           res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
@@ -446,6 +530,7 @@ const server = http.createServer(async (req, res) => {
         return send(res, 200, { phone, pool: resourcePool(phones) });
       }
       if (req.method === 'POST' && action === 'stop') {
+        stopFrameLoop(phone.id);
         try { await runDocker(['stop', '-t', '5', containerName(phone)]); } catch { /* pehle se band ho to bhi theek */ }
         if (phone.startedAt) phone.runtimeMinutes += Math.round((Date.now() - phone.startedAt) / 60000);
         phone.startedAt = null; phone.status = 'stopped'; phone.lastError = null;
@@ -453,6 +538,7 @@ const server = http.createServer(async (req, res) => {
         return send(res, 200, { phone, pool: resourcePool(phones) });
       }
       if (req.method === 'POST' && action === 'restart') {
+        stopFrameLoop(phone.id);
         if (phone.status !== 'starting' && !startingSet.has(phone.id)) {
           if (phone.startedAt) phone.runtimeMinutes += Math.round((Date.now() - phone.startedAt) / 60000);
           phone.startedAt = null;
@@ -479,6 +565,7 @@ const server = http.createServer(async (req, res) => {
           if (!proxy || proxy === 'INVALID') return send(res, 400, { error: 'Proxy ka IP/hostname aur sahi port likho — ya proxy hatane ke liye "Proxy Hatao" dabao.' });
           phone.proxy = proxy;
         }
+        if (phone.status === 'running') applyProxy(phone); // chal rahe phone par foran lagao
       }
       saveJson('phones.json', phones);
       return send(res, 200, { phone, pool: resourcePool(phones) });
