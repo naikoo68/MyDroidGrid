@@ -35,5 +35,8 @@
 .phone-screen{background:#0a1420;border-radius:22px;aspect-ratio:9/15;max-height:60vh;margin:12px auto;display:flex;align-items:center;justify-content:center;color:#dcebfb;padding:20px}
 .phone-screen .note{color:#8fb4dd}
 .screen-icon{font-size:44px;margin-bottom:8px}
+.screen-img{width:100%;max-height:60vh;object-fit:contain;background:#000;border-radius:12px;touch-action:none;display:block;margin:0 auto}
+.screen-controls{display:flex;gap:8px;justify-content:center;margin-top:10px}
+.screen-controls button{padding:8px 14px;border-radius:7px;border:1px solid #cfe0f2;background:#eef4fb;cursor:pointer;font-weight:600}
 .error{color:#b03a3a;font-size:14px;min-height:18px}
 .hidden{display:none!important}

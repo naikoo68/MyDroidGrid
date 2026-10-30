@@ -61,12 +61,15 @@ function readBody(req) {
     req.on('end', () => { try { resolve(JSON.parse(data || '{}')); } catch { resolve({}); } });
   });
 }
-function authUser(req) {
-  const header = req.headers.authorization || '';
-  const payload = verifyToken(header.replace('Bearer ', ''));
+function authUserToken(token) {
+  const payload = verifyToken(token);
   if (!payload) return null;
   const users = loadJson('users.json', []);
   return users.find(u => u.id === payload.uid) || null;
+}
+function authUser(req) {
+  const header = req.headers.authorization || '';
+  return authUserToken(header.replace('Bearer ', ''));
 }
 
 function resourcePool(phones, excludeId = null) {
@@ -116,6 +119,11 @@ const startingSet = new Set();
 async function runDocker(args, timeout = 30000) {
   const r = await execFileP('docker', args, { timeout, maxBuffer: 16 * 1024 * 1024 });
   return String(r.stdout || '');
+}
+// Binary output ke liye (screencap PNG) — stdout Buffer ki surat me wapas aata hai.
+async function runDockerBuffer(args, timeout = 30000) {
+  const r = await execFileP('docker', args, { timeout, maxBuffer: 16 * 1024 * 1024, encoding: 'buffer' });
+  return r.stdout;
 }
 function shortErr(e) {
   const raw = (e && (e.stderr || e.message)) || e || 'unknown error';
@@ -299,7 +307,12 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (p.startsWith('/api/phones') || p === '/api/resources') {
-    const user = authUser(req);
+    // screen.png <img> tag se load hoti hai — wahan Authorization header nahi ja
+    // sakta, is liye SIRF us ek GET route par token query param (?t=) se bhi chalega.
+    // Baqi tamam routes sirf header wali auth par rahenge.
+    const user = (req.method === 'GET' && /\/screen\.png$/.test(p))
+      ? authUserToken(url.searchParams.get('t'))
+      : authUser(req);
     if (!user) return send(res, 401, { error: 'Login required.' });
     let phones = loadJson('phones.json', []);
 
@@ -310,6 +323,15 @@ const server = http.createServer(async (req, res) => {
       let changed = false;
       for (const ph of phones) {
         if (ph.status !== 'running') continue;
+        // Container maujood hi nahi (engine se pehle ke zamane ka nakli 'running'
+        // record) -> runtime jode baghair stopped karo. Asal runtime sirf tab
+        // jodo jab container asal me bana tha aur ab band hai.
+        let exists = true;
+        try { await runDocker(['inspect', containerName(ph)]); } catch { exists = false; }
+        if (!exists) {
+          ph.status = 'stopped'; ph.startedAt = null; changed = true;
+          continue;
+        }
         let alive = false;
         try { alive = (await runDocker(['inspect', '-f', '{{.State.Running}}', containerName(ph)])).trim() === 'true'; } catch { alive = false; }
         if (!alive) {
@@ -350,7 +372,7 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { phone, pool: resourcePool(phones) });
     }
 
-    const m = p.match(/^\/api\/phones\/([^/]+)(?:\/(start|stop|restart|resources|proxy))?$/);
+    const m = p.match(/^\/api\/phones\/([^/]+)(?:\/(start|stop|restart|resources|proxy|input|screen\.png))?$/);
     if (m) {
       const phone = phones.find(x => x.id === m[1]);
       if (!phone) return send(res, 404, { error: 'Phone nahi mila.' });
@@ -360,6 +382,46 @@ const server = http.createServer(async (req, res) => {
         try { fs.rmSync(phoneDataDir(phone), { recursive: true, force: true }); } catch { }
         phones = phones.filter(x => x.id !== phone.id); saveJson('phones.json', phones);
         return send(res, 200, { ok: true, pool: resourcePool(phones) });
+      }
+      if (req.method === 'GET' && action === 'screen.png') {
+        // Asal screen ka ek frame (PNG) — frontend isay bar bar load karke live screen banata hai.
+        if (phone.status !== 'running') { res.writeHead(400, { 'Content-Type': 'text/plain' }); return res.end('Phone is not running.'); }
+        try {
+          const buf = await runDockerBuffer(['exec', containerName(phone), '/system/bin/screencap', '-p'], 15000);
+          res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-store' });
+          return res.end(buf);
+        } catch (e) {
+          res.writeHead(502, { 'Content-Type': 'text/plain' });
+          return res.end('Screen capture failed.');
+        }
+      }
+      if (req.method === 'POST' && action === 'input') {
+        // Touch / key asal Android ko bhejna. Jagah fractions (0..1) me aati hai,
+        // phone ki apni resolution ke pixels me badal kar input ko di jati hai.
+        if (phone.status !== 'running') return send(res, 400, { error: 'Phone chal nahi raha — pehle Start karo.' });
+        const b = await readBody(req);
+        const { width, height } = resParts(phone.resolution);
+        const isFrac = v => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 1;
+        const toX = f => String(Math.round(f * (width - 1)));
+        const toY = f => String(Math.round(f * (height - 1)));
+        let args = null;
+        if (b.type === 'tap') {
+          if (!isFrac(b.fx) || !isFrac(b.fy)) return send(res, 400, { error: 'Tap ki jagah sahi nahi hai.' });
+          args = ['exec', containerName(phone), '/system/bin/input', 'tap', toX(b.fx), toY(b.fy)];
+        } else if (b.type === 'swipe') {
+          if (![b.fx1, b.fy1, b.fx2, b.fy2].every(isFrac)) return send(res, 400, { error: 'Swipe ki jagah sahi nahi hai.' });
+          const ms = Number.isFinite(b.ms) ? Math.min(1000, Math.max(50, Math.round(b.ms))) : 250;
+          args = ['exec', containerName(phone), '/system/bin/input', 'swipe', toX(b.fx1), toY(b.fy1), toX(b.fx2), toY(b.fy2), String(ms)];
+        } else if (b.type === 'key') {
+          const code = Number(b.code);
+          if (![3, 4, 26, 66, 67, 187].includes(code)) return send(res, 400, { error: 'Ye key allowed nahi hai.' });
+          args = ['exec', containerName(phone), '/system/bin/input', 'keyevent', String(code)];
+        } else {
+          return send(res, 400, { error: 'Input type samajh nahi aya.' });
+        }
+        try { await runDocker(args, 15000); }
+        catch (e) { return send(res, 502, { error: shortErr(e) }); }
+        return send(res, 200, { ok: true });
       }
       if (req.method === 'POST' && action === 'start') {
         if (phone.status !== 'running' && phone.status !== 'starting' && !startingSet.has(phone.id)) {

@@ -59,7 +59,7 @@
   </section>
   <section id="pool" class="pool"></section>
   <section id="phones" class="grid"></section>
-  <p class="note">Live screen streaming arrives in Phase 2, when the phones run live on the server. In Phase 1 the full system — accounts, phones, resources — is real and saved.</p>
+  <p class="note">Phones ab asal me server par chalte hain — kisi bhi running phone par “Open Phone” dabao: us ki live screen yahin khulegi, aur touch karke chala bhi sakte ho.</p>
 
   <section class="dash-head">
     <h2>My Servers <span id="serverCount" class="badge"></span></h2>
@@ -122,12 +122,18 @@
   <div class="modal-box screen-box">
     <h3 id="screenTitle">Phone</h3>
     <div class="phone-screen">
-      <div>
+      <img id="screenImg" class="screen-img hidden" alt="Phone screen">
+      <div id="screenFallback">
         <div class="screen-icon">📱</div>
         <p id="screenMsg">Live screen yahan ayegi.</p>
-        <p class="note" id="screenNote"></p>
       </div>
     </div>
+    <div class="screen-controls hidden" id="screenControls">
+      <button onclick="screenKey(4)">◀ Back</button>
+      <button onclick="screenKey(3)">● Home</button>
+      <button onclick="screenKey(187)">■ Recents</button>
+    </div>
+    <p class="note" id="screenNote"></p>
     <button class="btn ghost full" onclick="closeScreen()">Close</button>
   </div>
 </div>

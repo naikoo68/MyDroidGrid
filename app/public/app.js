@@ -122,16 +122,112 @@ function renderPhones(phones, pool) {
     </div>`).join('') : '<div class="card"><h3>No phones yet</h3><p>Press “Create Phone” — choose the version, RAM, cores and storage yourself.</p></div>';
 }
 
+// ---------- Live screen: screencap frames + touch ----------
+// Screen asal Android se bar bar screenshot le kar dikhayi jati hai;
+// generation counter band/purani window ki purani requests ko rokta hai.
+const screenStream = { phoneId: null, gen: 0, timer: null, counter: 0, errors: 0 };
+
+function startScreenStream(id) {
+  screenStream.phoneId = id;
+  screenStream.errors = 0;
+  loadScreenFrame(++screenStream.gen);
+}
+function stopScreenStream() {
+  screenStream.gen++;
+  screenStream.phoneId = null;
+  if (screenStream.timer) { clearTimeout(screenStream.timer); screenStream.timer = null; }
+}
+function loadScreenFrame(gen) {
+  if (gen !== screenStream.gen || !screenStream.phoneId) return;
+  el('screenImg').src = `/api/phones/${screenStream.phoneId}/screen.png?t=${encodeURIComponent(TOKEN)}&v=${++screenStream.counter}`;
+}
+function scheduleScreenFrame(gen, delay) {
+  if (gen !== screenStream.gen) return;
+  if (screenStream.timer) clearTimeout(screenStream.timer);
+  screenStream.timer = setTimeout(() => loadScreenFrame(gen), delay);
+}
+function refreshScreenNow() {
+  if (!screenStream.phoneId) return;
+  if (screenStream.timer) { clearTimeout(screenStream.timer); screenStream.timer = null; }
+  loadScreenFrame(screenStream.gen);
+}
+
 function openPhone(id) {
   const ph = (window._phones || []).find(x => x.id === id); if (!ph) return;
+  stopScreenStream();
   el('screenTitle').textContent = ph.name + ' — Android ' + ph.androidVersion;
-  el('screenMsg').textContent = ph.status === 'running'
-    ? 'Ye phone asal me chal raha hai — Android server par boot ho chuka hai, aur Start/Stop ab asal engine se jude hue hain. Iski live screen — touch karke chalane wali — agle step (screen wiring) me yahin is window me khulegi.'
-    : 'Ye phone abhi band hai. Pehle card se Start dabao — phir iski screen yahan khulegi.';
   el('screenNote').textContent = `Screen ${ph.resolution} · ${ph.ramGB} GB RAM · ${ph.cores} cores · Proxy: ${ph.proxy ? ph.proxy.host + ':' + ph.proxy.port : 'server IP'}`;
-  el('screenModal').classList.remove('hidden');
+  const img = el('screenImg');
+  img.classList.add('hidden'); img.removeAttribute('src');
+  el('screenFallback').classList.remove('hidden');
+  if (ph.status === 'running') {
+    el('screenMsg').textContent = 'Screen aa rahi hai...';
+    el('screenControls').classList.remove('hidden');
+    el('screenModal').classList.remove('hidden');
+    startScreenStream(id);
+  } else {
+    el('screenMsg').textContent = 'Ye phone abhi band hai. Pehle card se Start dabao — phir iski screen yahan khulegi.';
+    el('screenControls').classList.add('hidden');
+    el('screenModal').classList.remove('hidden');
+  }
 }
-function closeScreen() { el('screenModal').classList.add('hidden'); }
+function closeScreen() {
+  stopScreenStream();
+  const img = el('screenImg');
+  img.removeAttribute('src'); img.classList.add('hidden');
+  el('screenModal').classList.add('hidden');
+}
+
+async function screenKey(code) {
+  if (!screenStream.phoneId) return;
+  try {
+    await api(`/api/phones/${screenStream.phoneId}/input`, 'POST', { type: 'key', code });
+    refreshScreenNow();
+  } catch (e) { /* khamoshi — agli refresh asal halat dikha degi */ }
+}
+
+// Screen par ungli/mouse: halki harakat = tap, lambi harakat = swipe.
+let touchStart = null;
+const screenImgEl = el('screenImg');
+screenImgEl.addEventListener('load', () => {
+  if (!screenStream.phoneId) return;
+  screenStream.errors = 0;
+  el('screenFallback').classList.add('hidden');
+  screenImgEl.classList.remove('hidden');
+  scheduleScreenFrame(screenStream.gen, 600);
+});
+screenImgEl.addEventListener('error', () => {
+  if (!screenStream.phoneId) return;
+  screenStream.errors++;
+  screenImgEl.classList.add('hidden');
+  el('screenFallback').classList.remove('hidden');
+  el('screenMsg').textContent = 'Screen nahi aa rahi — phone band to nahi ho gaya?';
+  if (screenStream.errors <= 5) scheduleScreenFrame(screenStream.gen, 2000);
+});
+screenImgEl.addEventListener('pointerdown', e => {
+  const r = screenImgEl.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  touchStart = { fx: (e.clientX - r.left) / r.width, fy: (e.clientY - r.top) / r.height, at: Date.now() };
+  e.preventDefault();
+});
+screenImgEl.addEventListener('pointercancel', () => { touchStart = null; });
+screenImgEl.addEventListener('pointerup', async e => {
+  if (!touchStart || !screenStream.phoneId) { touchStart = null; return; }
+  const r = screenImgEl.getBoundingClientRect();
+  const start = touchStart; touchStart = null;
+  if (!r.width || !r.height) return;
+  const fx2 = (e.clientX - r.left) / r.width, fy2 = (e.clientY - r.top) / r.height;
+  const clampF = v => Math.min(1, Math.max(0, v));
+  try {
+    if (Math.hypot(fx2 - start.fx, fy2 - start.fy) < 0.02) {
+      await api(`/api/phones/${screenStream.phoneId}/input`, 'POST', { type: 'tap', fx: clampF(start.fx), fy: clampF(start.fy) });
+    } else {
+      const ms = Math.min(1000, Math.max(80, Date.now() - start.at));
+      await api(`/api/phones/${screenStream.phoneId}/input`, 'POST', { type: 'swipe', fx1: clampF(start.fx), fy1: clampF(start.fy), fx2: clampF(fx2), fy2: clampF(fy2), ms });
+    }
+    refreshScreenNow();
+  } catch (err) { /* khamoshi — agli refresh asal halat dikha degi */ }
+});
 
 let proxyPhoneId = null;
 function openProxy(id) {
